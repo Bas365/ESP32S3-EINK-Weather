@@ -321,15 +321,15 @@ void drawCurrentConditions(const owm_current_t &current,
   // ---- HIGH / LOW (right edge of left column) -----------------------------
   String hiStr = String(tempToUnitInt(today.temp.max)) + "\260";
   String loStr = String(tempToUnitInt(today.temp.min)) + "\260";
-  const int hlRight = LCOL_W - 12;
+  const int hlRight = LCOL_W - 10;
   display.setFont(&FONT_6pt8b);
-  drawString(hlRight, 72, "HIGH", RIGHT);
-  display.setFont(&FONT_20pt8b);
-  drawString(hlRight, 100, hiStr, RIGHT);
+  drawString(hlRight, 62, "HIGH", RIGHT);
+  display.setFont(&FONT_18pt8b);
+  drawString(hlRight, 90, hiStr, RIGHT);
   display.setFont(&FONT_6pt8b);
-  drawString(hlRight, 132, "LOW", RIGHT);
-  display.setFont(&FONT_20pt8b);
-  drawString(hlRight, 160, loStr, RIGHT);
+  drawString(hlRight, 118, "LOW", RIGHT);
+  display.setFont(&FONT_18pt8b);
+  drawString(hlRight, 146, loStr, RIGHT);
 
   // ---- condition + feels like (row above metric strip) --------------------
   String condStr = current.weather.main;
@@ -425,11 +425,13 @@ void drawForecast(const owm_daily_t *daily, tm timeInfo) {
   const float rowH = rowsH / 5.0f;     // ~42.4
 
   // header
+  const int precipX = colX + 185;  // precip column (left aligned)
+  const int windX = colX + 275;    // wind column (left aligned)
   display.setFont(&FONT_8pt8b);
   drawString(padL, headY0 + 16, "5-DAY FORECAST", LEFT);
   display.setFont(&FONT_6pt8b);
-  drawString(padR, headY0 + 16, "WIND", RIGHT);
-  drawString(padR - 96, headY0 + 16, "PRECIP", RIGHT);
+  drawString(precipX, headY0 + 16, "PRECIP", LEFT);
+  drawString(windX, headY0 + 16, "WIND", LEFT);
 
   String dataStr;
   for (int i = 0; i < 5; ++i) {
@@ -454,20 +456,20 @@ void drawForecast(const owm_daily_t *daily, tm timeInfo) {
     String hiStr = String(tempToUnitInt(daily[i].temp.max)) + "\260";
     String loStr = String(tempToUnitInt(daily[i].temp.min)) + "\260";
     display.setFont(&FONT_12pt8b);
-    drawString(colX + 92, baseY, hiStr, LEFT);
+    drawString(colX + 90, baseY, hiStr, LEFT);
     int loX = display.getCursorX() - MARGIN_X + 4;
     display.setFont(&FONT_9pt8b);
     drawString(loX, baseY, loStr, LEFT);
 
-    // wind (far right): direction + speed
-    display.setFont(&FONT_9pt8b);
-    dataStr = String(getCompassPointNotation(daily[i].wind_deg)) + " " +
-              String(windToUnitInt(daily[i].wind_speed));
-    drawString(padR, baseY, dataStr, RIGHT);
-
     // precip probability
     int pop = static_cast<int>(std::round(daily[i].pop * 100.0f));
-    drawString(padR - 96, baseY, String(pop) + "%", RIGHT);
+    display.setFont(&FONT_9pt8b);
+    drawString(precipX, baseY, String(pop) + "%", LEFT);
+
+    // wind: direction + speed
+    dataStr = String(getCompassPointNotation(daily[i].wind_deg)) + " " +
+              String(windToUnitInt(daily[i].wind_speed));
+    drawString(windX, baseY, dataStr, LEFT);
   }
   return;
 }
@@ -593,8 +595,8 @@ void drawOutlookGraph(const owm_hourly_t *hourly, const owm_daily_t *daily,
   drawString(W - 74, GRAPH_Y0 + 19, "PRECIP %", LEFT);
 
   // plot area
-  const int xPos0 = 30;            // room for left temp labels
-  int xPos1 = W - 32;              // room for right precip labels
+  const int xPos0 = 34;            // room for left temp labels
+  int xPos1 = W - 46;              // room for right precip labels
   const int yPos0 = GRAPH_Y0 + 32; // top of plot
   const int yPos1 = H - 18;        // baseline (room for hour labels)
 
@@ -695,16 +697,13 @@ void drawOutlookGraph(const owm_hourly_t *hourly, const owm_daily_t *daily,
 
     if (precipBoundMax > 0) {
 #ifdef UNITS_HOURLY_PRECIP_POP
-      dataStr = String(100 - (i * 20));
-      String precipUnit = "%";
+      dataStr = String(100 - (i * (100 / yMajorTicks))) + "%";
 #else
       dataStr = String(static_cast<int>(precipBoundMax -
-                                        (i * precipBoundMax / yMajorTicks)));
-      String precipUnit = " mm";
+                                        (i * precipBoundMax / yMajorTicks))) +
+                String(" mm");
 #endif
-      drawString(xPos1 + 8, yTick + 4, dataStr, LEFT);
-      display.setFont(&FONT_5pt8b);
-      drawString(display.getCursorX() - MARGIN_X, yTick + 4, precipUnit, LEFT);
+      drawString(xPos1 + 6, yTick + 4, dataStr, LEFT);
     }
 
     if (i < yMajorTicks) {
