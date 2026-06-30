@@ -11,7 +11,7 @@
 // Leave empty to use WiFiManager's captive portal for setup
 // =============================================================================
 #define SECRET_WIFI_SSID     ""
-#define SECRET_WIFI_PASSWORD "tehetehe"
+#define SECRET_WIFI_PASSWORD "tehete"
 
 // =============================================================================
 // OPENWEATHERMAP API
