@@ -111,7 +111,7 @@ namespace hero {
   const int STATUS_H   = 34;              // top status bar height
   const int BODY_Y0    = STATUS_H;        // 34
   const int BODY_Y1    = 270;             // bottom of current/forecast body
-  const int LCOL_W     = 354;             // left (current conditions) column
+  const int LCOL_W     = 372;             // left (current conditions) column
   const int METRIC_H   = 88;              // bottom metric strip in left column
   const int METRIC_Y0  = BODY_Y1 - METRIC_H; // 182
   const int GRAPH_Y0   = BODY_Y1;         // 270 (top of hourly graph)
@@ -393,18 +393,18 @@ void drawCurrentConditions(const owm_current_t &current,
 
   // cell 3: sunrise / sunset
   int cellX = 3 * cellW;
-  drawBmp(cellX + 6, METRIC_Y0 + 8, wi_sunrise_32x32, 32, 32, GxEPD_BLACK);
-  drawBmp(cellX + 6, METRIC_Y0 + 46, wi_sunset_32x32, 32, 32, GxEPD_BLACK);
-  display.setFont(&FONT_11pt8b);
+  drawBmp(cellX + 4, METRIC_Y0 + 8, wi_sunrise_32x32, 32, 32, GxEPD_BLACK);
+  drawBmp(cellX + 4, METRIC_Y0 + 46, wi_sunset_32x32, 32, 32, GxEPD_BLACK);
+  display.setFont(&FONT_10pt8b);
   time_t ts = current.sunrise;
   tm *ti = localtime(&ts);
   _strftime(timeBuffer, sizeof(timeBuffer), TIME_FORMAT, ti);
-  drawString(cellX + 42, METRIC_Y0 + 30, timeBuffer, LEFT);
+  drawString(cellX + 38, METRIC_Y0 + 30, timeBuffer, LEFT);
   memset(timeBuffer, '\0', sizeof(timeBuffer));
   ts = current.sunset;
   ti = localtime(&ts);
   _strftime(timeBuffer, sizeof(timeBuffer), TIME_FORMAT, ti);
-  drawString(cellX + 42, METRIC_Y0 + 68, timeBuffer, LEFT);
+  drawString(cellX + 38, METRIC_Y0 + 68, timeBuffer, LEFT);
 
   return;
 }
@@ -425,8 +425,8 @@ void drawForecast(const owm_daily_t *daily, tm timeInfo) {
   const float rowH = rowsH / 5.0f;     // ~42.4
 
   // header
-  const int precipX = colX + 185;  // precip column (left aligned)
-  const int windX = colX + 275;    // wind column (left aligned)
+  const int precipX = colX + 172;  // precip column (left aligned)
+  const int windX = colX + 252;    // wind column (left aligned)
   display.setFont(&FONT_8pt8b);
   drawString(padL, headY0 + 16, "5-DAY FORECAST", LEFT);
   display.setFont(&FONT_6pt8b);
@@ -449,26 +449,25 @@ void drawForecast(const owm_daily_t *daily, tm timeInfo) {
     timeInfo.tm_wday = (timeInfo.tm_wday + 1) % 7;
 
     // condition icon
-    drawBmp(colX + 52, yc - 16, getDailyForecastBitmap32(daily[i]), 32, 32,
+    drawBmp(colX + 62, yc - 16, getDailyForecastBitmap32(daily[i]), 32, 32,
             GxEPD_BLACK);
 
-    // hi / lo
+    // hi / lo (fixed columns so the lows align vertically across rows)
     String hiStr = String(tempToUnitInt(daily[i].temp.max)) + "\260";
     String loStr = String(tempToUnitInt(daily[i].temp.min)) + "\260";
     display.setFont(&FONT_12pt8b);
-    drawString(colX + 90, baseY, hiStr, LEFT);
-    int loX = display.getCursorX() - MARGIN_X + 4;
+    drawString(colX + 100, baseY, hiStr, LEFT);
     display.setFont(&FONT_9pt8b);
-    drawString(loX, baseY, loStr, LEFT);
+    drawString(colX + 136, baseY, loStr, LEFT);
 
     // precip probability
     int pop = static_cast<int>(std::round(daily[i].pop * 100.0f));
     display.setFont(&FONT_9pt8b);
     drawString(precipX, baseY, String(pop) + "%", LEFT);
 
-    // wind: direction + speed
+    // wind: direction + speed + unit
     dataStr = String(getCompassPointNotation(daily[i].wind_deg)) + " " +
-              String(windToUnitInt(daily[i].wind_speed));
+              String(windToUnitInt(daily[i].wind_speed)) + " km/h";
     drawString(windX, baseY, dataStr, LEFT);
   }
   return;
@@ -596,7 +595,7 @@ void drawOutlookGraph(const owm_hourly_t *hourly, const owm_daily_t *daily,
 
   // plot area
   const int xPos0 = 34;            // room for left temp labels
-  int xPos1 = W - 46;              // room for right precip labels
+  int xPos1 = W - 54;              // room for right precip labels
   const int yPos0 = GRAPH_Y0 + 32; // top of plot
   const int yPos1 = H - 18;        // baseline (room for hour labels)
 
@@ -672,7 +671,7 @@ void drawOutlookGraph(const owm_hourly_t *hourly, const owm_daily_t *daily,
   Serial.println("Loop 2 complete.");
 
 #ifdef UNITS_HOURLY_PRECIP_POP
-  float precipBoundMax = (precipMax > 0) ? 100.0f : 0.0f;
+  float precipBoundMax = 100.0f; // always show the precip %% axis
 #else
   float precipBoundMax = std::ceil(precipMax);
 #endif
@@ -789,6 +788,20 @@ void drawOutlookGraph(const owm_hourly_t *hourly, const owm_daily_t *daily,
       _strftime(timeBuffer, sizeof(timeBuffer), HOUR_FORMAT, ti);
       drawString(xTick, yPos1 + 1 + 12 + 4 + 3, timeBuffer, CENTER);
     }
+  }
+
+  // final right-edge hour tick (end of the window, e.g. the 24h mark)
+  {
+    int xEdge = static_cast<int>(xPos0 + HOURLY_GRAPH_MAX * xInterval);
+    display.drawLine(xEdge + MARGIN_X, yPos1 + 1 + MARGIN_Y, xEdge + MARGIN_X,
+                     yPos1 + 4 + MARGIN_Y, GxEPD_BLACK);
+    display.drawLine(xEdge + 1 + MARGIN_X, yPos1 + 1 + MARGIN_Y,
+                     xEdge + 1 + MARGIN_X, yPos1 + 4 + MARGIN_Y, GxEPD_BLACK);
+    char tb[12] = {};
+    time_t tts = hourly[HOURLY_GRAPH_MAX].dt;
+    tm *tti = localtime(&tts);
+    _strftime(tb, sizeof(tb), HOUR_FORMAT, tti);
+    drawString(xEdge, yPos1 + 1 + 12 + 4 + 3, tb, CENTER);
   }
   return;
 }
