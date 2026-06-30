@@ -272,42 +272,18 @@ void drawCurrentConditions(const owm_current_t &current,
   drawBmp(0, lowerY + (48 + 8) * 0, wi_sunrise_48x48, 48, 48, GxEPD_BLACK);
   drawBmp(0, lowerY + (48 + 8) * 1, wi_strong_wind_48x48, 48, 48, GxEPD_BLACK);
   drawBmp(0, lowerY + (48 + 8) * 2, wi_day_sunny_48x48, 48, 48, GxEPD_BLACK);
-#ifndef DISP_BW_V1
-  drawBmp(0, lowerY + (48 + 8) * 3, air_filter_48x48, 48, 48, GxEPD_BLACK);
-  drawBmp(0, lowerY + (48 + 8) * 4, house_thermometer_48x48, 48, 48,
-          GxEPD_BLACK);
-#endif
   drawBmp(170, lowerY + (48 + 8) * 0, wi_sunset_48x48, 48, 48, GxEPD_BLACK);
   drawBmp(170, lowerY + (48 + 8) * 1, wi_humidity_48x48, 48, 48, GxEPD_BLACK);
   drawBmp(170, lowerY + (48 + 8) * 2, wi_barometer_48x48, 48, 48, GxEPD_BLACK);
-#ifndef DISP_BW_V1
-  drawBmp(170, lowerY + (48 + 8) * 3, visibility_icon_48x48, 48, 48,
-          GxEPD_BLACK);
-  drawBmp(170, lowerY + (48 + 8) * 4, house_humidity_48x48, 48, 48,
-          GxEPD_BLACK);
-#endif
 
   // current weather data labels
   display.setFont(&FONT_7pt8b);
   drawString(48, lowerY + 10 + (48 + 8) * 0, TXT_SUNRISE, LEFT);
   drawString(48, lowerY + 10 + (48 + 8) * 1, TXT_WIND, LEFT);
   drawString(48, lowerY + 10 + (48 + 8) * 2, TXT_UV_INDEX, LEFT);
-#ifndef DISP_BW_V1
-  const char *air_quality_index_label;
-  if (aqi_desc_type(AQI_SCALE) == AIR_QUALITY_DESC)
-    air_quality_index_label = TXT_AIR_QUALITY;
-  else
-    air_quality_index_label = TXT_AIR_POLLUTION;
-  drawString(48, lowerY + 10 + (48 + 8) * 3, air_quality_index_label, LEFT);
-  drawString(48, lowerY + 10 + (48 + 8) * 4, TXT_INDOOR_TEMPERATURE, LEFT);
-#endif
   drawString(170 + 48, lowerY + 10 + (48 + 8) * 0, TXT_SUNSET, LEFT);
   drawString(170 + 48, lowerY + 10 + (48 + 8) * 1, TXT_HUMIDITY, LEFT);
   drawString(170 + 48, lowerY + 10 + (48 + 8) * 2, TXT_PRESSURE, LEFT);
-#ifndef DISP_BW_V1
-  drawString(170 + 48, lowerY + 10 + (48 + 8) * 3, TXT_VISIBILITY, LEFT);
-  drawString(170 + 48, lowerY + 10 + (48 + 8) * 4, TXT_INDOOR_HUMIDITY, LEFT);
-#endif
 
   // sunrise
   display.setFont(&FONT_12pt8b);
@@ -385,66 +361,6 @@ void drawCurrentConditions(const owm_current_t &current,
     }
   }
 
-#ifndef DISP_BW_V1
-  // air quality index
-  display.setFont(&FONT_12pt8b);
-  if (airPollutionSuccess) {
-    const owm_components_t &c = owm_air_pollution.components;
-    int aqi = calc_aqi(AQI_SCALE, c.co, c.nh3, c.no, c.no2, c.o3, NULL, c.so2,
-                       c.pm10, c.pm2_5);
-    int aqi_max = aqi_scale_max(AQI_SCALE);
-    if (aqi > aqi_max)
-      dataStr = "> " + String(aqi_max);
-    else
-      dataStr = String(aqi);
-    drawString(48, lowerY + (17 / 2) + ((48 + 8) * 3) + (48 / 2), dataStr,
-               LEFT);
-    display.setFont(&FONT_7pt8b);
-    dataStr = String(aqi_desc(AQI_SCALE, aqi));
-    max_w = 170 - (display.getCursorX() - MARGIN_X + sp);
-    if (getStringWidth(dataStr) <= max_w) {
-      drawString(display.getCursorX() - MARGIN_X + sp,
-                 lowerY + (17 / 2) + ((48 + 8) * 3) + (48 / 2), dataStr, LEFT);
-    } else {
-      display.setFont(&FONT_5pt8b);
-      if (getStringWidth(dataStr) <= max_w) {
-        drawString(display.getCursorX() - MARGIN_X + sp,
-                   lowerY + (17 / 2) + ((48 + 8) * 3) + (48 / 2), dataStr,
-                   LEFT);
-      } else {
-        drawMultiLnString(display.getCursorX() - MARGIN_X + sp,
-                          lowerY + (17 / 2) + ((48 + 8) * 3) + (48 / 2) - 10,
-                          dataStr, LEFT, max_w, 2, 10);
-      }
-    }
-  } else {
-    dataStr = "--";
-    drawString(48, lowerY + (17 / 2) + ((48 + 8) * 3) + (48 / 2), dataStr,
-               LEFT);
-  }
-
-  // indoor temperature
-  display.setFont(&FONT_12pt8b);
-  if (!std::isnan(inTemp)) {
-#ifdef UNITS_TEMP_KELVIN
-    dataStr = String(std::round(celsius_to_kelvin(inTemp) * 10) / 10.0f, 1);
-#endif
-#ifdef UNITS_TEMP_CELSIUS
-    dataStr = String(std::round(inTemp * 10) / 10.0f, 1);
-#endif
-#ifdef UNITS_TEMP_FAHRENHEIT
-    dataStr =
-        String(static_cast<int>(std::round(celsius_to_fahrenheit(inTemp))));
-#endif
-  } else {
-    dataStr = "--";
-  }
-#if defined(UNITS_TEMP_CELSIUS) || defined(UNITS_TEMP_FAHRENHEIT)
-  dataStr += "\260";
-#endif
-  drawString(48, lowerY + 17 / 2 + (48 + 8) * 4 + 48 / 2, dataStr, LEFT);
-#endif
-
   // sunset
   memset(timeBuffer, '\0', sizeof(timeBuffer));
   ts = current.sunset;
@@ -483,45 +399,6 @@ void drawCurrentConditions(const owm_current_t &current,
   drawString(display.getCursorX() - MARGIN_X,
              lowerY + 17 / 2 + (48 + 8) * 2 + 48 / 2, unitStr, LEFT);
 
-#ifndef DISP_BW_V1
-  // visibility
-  display.setFont(&FONT_12pt8b);
-#ifdef UNITS_DIST_KILOMETERS
-  float vis = meters_to_kilometers(current.visibility);
-  unitStr = String(" ") + TXT_UNITS_DIST_KILOMETERS;
-#endif
-#ifdef UNITS_DIST_MILES
-  float vis = meters_to_miles(current.visibility);
-  unitStr = String(" ") + TXT_UNITS_DIST_MILES;
-#endif
-  if (vis < 1.95)
-    dataStr = String(std::round(10 * vis) / 10.0, 1);
-  else
-    dataStr = String(static_cast<int>(std::round(vis)));
-#ifdef UNITS_DIST_KILOMETERS
-  if (vis >= 10)
-    dataStr = "> " + dataStr;
-#endif
-#ifdef UNITS_DIST_MILES
-  if (vis >= 6)
-    dataStr = "> " + dataStr;
-#endif
-  drawString(170 + 48, lowerY + 17 / 2 + (48 + 8) * 3 + 48 / 2, dataStr, LEFT);
-  display.setFont(&FONT_8pt8b);
-  drawString(display.getCursorX() - MARGIN_X,
-             lowerY + 17 / 2 + (48 + 8) * 3 + 48 / 2, unitStr, LEFT);
-
-  // indoor humidity
-  display.setFont(&FONT_12pt8b);
-  if (!std::isnan(inHumidity))
-    dataStr = String(static_cast<int>(std::round(inHumidity)));
-  else
-    dataStr = "--";
-  drawString(170 + 48, lowerY + 17 / 2 + (48 + 8) * 4 + 48 / 2, dataStr, LEFT);
-  display.setFont(&FONT_8pt8b);
-  drawString(display.getCursorX() - MARGIN_X,
-             lowerY + 17 / 2 + (48 + 8) * 4 + 48 / 2, "%", LEFT);
-#endif
   return;
 }
 
