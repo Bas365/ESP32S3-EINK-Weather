@@ -599,83 +599,80 @@ void drawOutlookGraph(const owm_hourly_t *hourly, const owm_daily_t *daily,
   const int yPos0 = GRAPH_Y0 + 32; // top of plot
   const int yPos1 = H - 18;        // baseline (room for hour labels)
 
-  // Calculate bounds
+  // --- collect TODAY's 3-hourly points (local time, 00:00..24:00) ----------
+  const int todayYday = timeInfo.tm_yday;
+  const int todayYear = timeInfo.tm_year;
+  std::vector<float> hHour;    // hour-of-day, 0..24
+  std::vector<float> hTemp;    // temperature in display unit
+  std::vector<float> hPrecip;  // precip value (% for POP, else mm)
+  for (int i = 0; i < OWM_NUM_HOURLY; ++i) {
+    time_t ts = hourly[i].dt;
+    tm lt = *localtime(&ts);
+    float hod = lt.tm_hour + lt.tm_min / 60.0f;
+    bool sameDay = (lt.tm_yday == todayYday && lt.tm_year == todayYear);
+    bool nextMidnight = (!sameDay) && (lt.tm_hour == 0) &&
+                        ((lt.tm_year > todayYear) || (lt.tm_yday == todayYday + 1));
+    if (sameDay) {
+      hHour.push_back(hod);
+    } else if (nextMidnight) {
+      hHour.push_back(24.0f); // close the curve at the right edge
+    } else if (!hHour.empty()) {
+      break; // we've passed the end of today
+    } else {
+      continue; // entries before today (shouldn't occur) — skip
+    }
+#ifdef UNITS_TEMP_CELSIUS
+    hTemp.push_back(kelvin_to_celsius(hourly[i].temp));
+#elif defined(UNITS_TEMP_FAHRENHEIT)
+    hTemp.push_back(kelvin_to_fahrenheit(hourly[i].temp));
+#else
+    hTemp.push_back(hourly[i].temp);
+#endif
+#ifdef UNITS_HOURLY_PRECIP_POP
+    hPrecip.push_back(hourly[i].pop * 100.0f);
+#else
+    hPrecip.push_back(hourly[i].rain_1h + hourly[i].snow_1h);
+#endif
+    if (nextMidnight) break;
+  }
+
+  // --- temperature scale: relative to TODAY's min/max, heavily rounded ------
   int yMajorTicks = 4;
 #ifdef UNITS_TEMP_CELSIUS
-  float tempMin = kelvin_to_celsius(hourly[0].temp);
-#endif
-#ifdef UNITS_TEMP_FAHRENHEIT
-  float tempMin = kelvin_to_fahrenheit(hourly[0].temp);
-#endif
-#ifdef UNITS_TEMP_KELVIN
-  float tempMin = hourly[0].temp;
-#endif
-  float tempMax = tempMin;
-#ifdef UNITS_HOURLY_PRECIP_POP
-  float precipMax = hourly[0].pop;
+  float tempMin = kelvin_to_celsius(daily[0].temp.min);
+  float tempMax = kelvin_to_celsius(daily[0].temp.max);
+#elif defined(UNITS_TEMP_FAHRENHEIT)
+  float tempMin = kelvin_to_fahrenheit(daily[0].temp.min);
+  float tempMax = kelvin_to_fahrenheit(daily[0].temp.max);
 #else
-  float precipMax = hourly[0].rain_1h + hourly[0].snow_1h;
+  float tempMin = daily[0].temp.min;
+  float tempMax = daily[0].temp.max;
 #endif
-  int yTempMajorTicks = 5;
-  float newTemp = 0;
-
-  Serial.println("Calculating graph bounds...");
-  for (int i = 1; i < HOURLY_GRAPH_MAX; ++i) {
-#ifdef UNITS_TEMP_CELSIUS
-    newTemp = kelvin_to_celsius(hourly[i].temp);
-#endif
-#ifdef UNITS_TEMP_FAHRENHEIT
-    newTemp = kelvin_to_fahrenheit(hourly[i].temp);
-#endif
-#ifdef UNITS_TEMP_KELVIN
-    newTemp = hourly[i].temp;
-#endif
-    tempMin = std::min(tempMin, newTemp);
-    tempMax = std::max(tempMax, newTemp);
-#ifdef UNITS_HOURLY_PRECIP_POP
-    precipMax = std::max<float>(precipMax, hourly[i].pop);
-#else
-    precipMax =
-        std::max<float>(precipMax, hourly[i].rain_1h + hourly[i].snow_1h);
-#endif
+  for (size_t k = 0; k < hTemp.size(); ++k) {
+    tempMin = std::min(tempMin, hTemp[k]);
+    tempMax = std::max(tempMax, hTemp[k]);
   }
-  Serial.printf("tempMin: %.1f, tempMax: %.1f, precipMax: %.1f\n", tempMin,
-                tempMax, precipMax);
-
-  int tempBoundMin = static_cast<int>(tempMin - 1) -
-                     modulo(static_cast<int>(tempMin - 1), yTempMajorTicks);
-  int tempBoundMax = static_cast<int>(tempMax + 1) +
-                     (yTempMajorTicks -
-                      modulo(static_cast<int>(tempMax + 1), yTempMajorTicks));
-
-  Serial.println("Adjusting major ticks (loop 1)...");
-  while ((tempBoundMax - tempBoundMin) / yTempMajorTicks > yMajorTicks) {
-    yTempMajorTicks += 5;
-    tempBoundMin = static_cast<int>(tempMin - 1) -
-                   modulo(static_cast<int>(tempMin - 1), yTempMajorTicks);
-    tempBoundMax = static_cast<int>(tempMax + 1) +
-                   (yTempMajorTicks -
-                    modulo(static_cast<int>(tempMax + 1), yTempMajorTicks));
-    if (yTempMajorTicks > 200)
-      break; // Emergency break
+  // pick a clean step so the 4 chunks land on round numbers
+  int range = static_cast<int>(std::ceil(tempMax)) -
+              static_cast<int>(std::floor(tempMin));
+  int step = (range <= 8) ? 2 : (range <= 20 ? 5 : 10);
+  int tempBoundMin = static_cast<int>(std::floor(tempMin / (float)step)) * step;
+  int tempBoundMax = tempBoundMin + yMajorTicks * step;
+  while (tempBoundMax < static_cast<int>(std::ceil(tempMax))) {
+    step += (step >= 5 ? 5 : 1);
+    tempBoundMin = static_cast<int>(std::floor(tempMin / (float)step)) * step;
+    tempBoundMax = tempBoundMin + yMajorTicks * step;
   }
-  Serial.println("Adjusting major ticks (loop 2)...");
-  while ((tempBoundMax - tempBoundMin) / yTempMajorTicks < yMajorTicks) {
-    if (tempMin - tempBoundMin <= tempBoundMax - tempMax)
-      tempBoundMin -= yTempMajorTicks;
-    else
-      tempBoundMax += yTempMajorTicks;
-    if (tempBoundMax - tempBoundMin > 1000)
-      break; // Emergency break
-  }
-  Serial.println("Loop 2 complete.");
+  int yTempMajorTicks = step;
 
 #ifdef UNITS_HOURLY_PRECIP_POP
   float precipBoundMax = 100.0f; // always show the precip %% axis
 #else
-  float precipBoundMax = std::ceil(precipMax);
+  float precipBoundMax = 1.0f;
+  for (size_t k = 0; k < hPrecip.size(); ++k)
+    precipBoundMax = std::max(precipBoundMax, hPrecip[k]);
+  precipBoundMax = std::ceil(precipBoundMax);
 #endif
-  // xPos1 already reserves room for the right-hand precip axis labels.
 
   // Draw axes with offset
   display.drawLine(xPos0 + MARGIN_X, yPos1 + MARGIN_Y, xPos1 + MARGIN_X,
@@ -712,96 +709,63 @@ void drawOutlookGraph(const owm_hourly_t *hourly, const owm_daily_t *daily,
     }
   }
 
-  int xMaxTicks = 8;
-  int hourInterval =
-      static_cast<int>(ceil(HOURLY_GRAPH_MAX / static_cast<float>(xMaxTicks)));
-  float xInterval = (xPos1 - xPos0 - 1) / static_cast<float>(HOURLY_GRAPH_MAX);
-  display.setFont(&FONT_8pt8b);
-
+  // hour-of-day (0..24) -> x ; unit temp -> y
+  const float xSpan = static_cast<float>(xPos1 - xPos0);
+  auto xOf = [&](float hod) { return xPos0 + (hod / 24.0f) * xSpan; };
   float yPxPerUnit =
       (yPos1 - yPos0) / static_cast<float>(tempBoundMax - tempBoundMin);
-  std::vector<int> x_t(HOURLY_GRAPH_MAX);
-  std::vector<int> y_t(HOURLY_GRAPH_MAX);
+  auto yOf = [&](float t) {
+    return static_cast<int>(std::round(yPos1 - yPxPerUnit * (t - tempBoundMin)));
+  };
 
-  for (int i = 0; i < HOURLY_GRAPH_MAX; ++i) {
-    y_t[i] = kelvin_to_plot_y(hourly[i].temp, tempBoundMin, yPxPerUnit, yPos1);
-    x_t[i] = static_cast<int>(
-        std::round(xPos0 + (i * xInterval) + (0.5 * xInterval)));
-  }
-
-  for (int i = 0; i < HOURLY_GRAPH_MAX; ++i) {
-    int xTick = static_cast<int>(xPos0 + (i * xInterval));
-
-    if (i > 0) {
-      int x0_t = x_t[i - 1] + MARGIN_X;
-      int x1_t = x_t[i] + MARGIN_X;
-      int y0_t = y_t[i - 1] + MARGIN_Y;
-      int y1_t = y_t[i] + MARGIN_Y;
-      display.drawLine(x0_t, y0_t, x1_t, y1_t, ACCENT_COLOR);
-      display.drawLine(x0_t, y0_t + 1, x1_t, y1_t + 1, ACCENT_COLOR);
-      display.drawLine(x0_t - 1, y0_t, x1_t - 1, y1_t, ACCENT_COLOR);
-    }
-
-#ifdef UNITS_HOURLY_PRECIP_POP
-    float precipVal = hourly[i].pop * 100;
-#else
-    float precipVal = hourly[i].rain_1h + hourly[i].snow_1h;
-#endif
-    int x0_p =
-        static_cast<int>(std::round(xPos0 + 1 + (i * xInterval))) + MARGIN_X;
-    int x1_p = static_cast<int>(std::round(xPos0 + 1 + ((i + 1) * xInterval))) +
-               MARGIN_X;
-    float yPxPerPrecip =
-        (precipBoundMax > 0) ? (yPos1 - yPos0) / precipBoundMax : 0;
-    int y0_p =
-        static_cast<int>(std::round(yPos1 - (yPxPerPrecip * precipVal))) +
-        MARGIN_Y;
-    int y1_p = yPos1 + MARGIN_Y;
-
-    // Only draw precipitation bars if there's precipitation to show.
-    // Diagonal-hatch fill + outline to match the design's precip bars.
-    if (precipBoundMax > 0 && precipVal > 0) {
-      int bx0 = x0_p + 1;
-      int bx1 = x1_p - 1;
-      if (bx1 > bx0) {
-        for (int y = y0_p; y < y1_p; ++y) {
-          for (int x = bx0; x < bx1; ++x) {
-            if (((x + y) & 3) == 0)
-              display.drawPixel(x, y, GxEPD_BLACK);
-          }
-        }
-        // outline
-        display.drawLine(bx0, y0_p, bx1 - 1, y0_p, GxEPD_BLACK);
-        display.drawLine(bx0, y0_p, bx0, y1_p - 1, GxEPD_BLACK);
-        display.drawLine(bx1 - 1, y0_p, bx1 - 1, y1_p - 1, GxEPD_BLACK);
-      }
-    }
-
-    if ((i % hourInterval) == 0) {
-      display.drawLine(xTick + MARGIN_X, yPos1 + 1 + MARGIN_Y, xTick + MARGIN_X,
-                       yPos1 + 4 + MARGIN_Y, GxEPD_BLACK);
-      display.drawLine(xTick + 1 + MARGIN_X, yPos1 + 1 + MARGIN_Y,
-                       xTick + 1 + MARGIN_X, yPos1 + 4 + MARGIN_Y, GxEPD_BLACK);
-      char timeBuffer[12] = {};
-      time_t ts = hourly[i].dt;
-      tm *ti = localtime(&ts);
-      _strftime(timeBuffer, sizeof(timeBuffer), HOUR_FORMAT, ti);
-      drawString(xTick, yPos1 + 1 + 12 + 4 + 3, timeBuffer, CENTER);
+  // precip bars (one per 3h slot), diagonal-hatch fill + outline
+  float yPxPerPrecip =
+      (precipBoundMax > 0) ? (yPos1 - yPos0) / precipBoundMax : 0;
+  int barHalf = static_cast<int>((xSpan / 24.0f) * 1.5f * 0.8f);
+  for (size_t k = 0; k < hHour.size(); ++k) {
+    float pv = hPrecip[k];
+    if (!(precipBoundMax > 0 && pv > 0))
+      continue;
+    int cxp = static_cast<int>(std::round(xOf(hHour[k])));
+    int bx0 = cxp - barHalf + MARGIN_X;
+    int bx1 = cxp + barHalf + MARGIN_X;
+    if (bx0 < xPos0 + MARGIN_X) bx0 = xPos0 + MARGIN_X;
+    if (bx1 > xPos1 + MARGIN_X) bx1 = xPos1 + MARGIN_X;
+    int y0p = static_cast<int>(std::round(yPos1 - yPxPerPrecip * pv)) + MARGIN_Y;
+    int y1p = yPos1 + MARGIN_Y;
+    if (bx1 > bx0) {
+      for (int y = y0p; y < y1p; ++y)
+        for (int x = bx0; x < bx1; ++x)
+          if (((x + y) & 3) == 0)
+            display.drawPixel(x, y, GxEPD_BLACK);
+      display.drawLine(bx0, y0p, bx1 - 1, y0p, GxEPD_BLACK);
+      display.drawLine(bx0, y0p, bx0, y1p - 1, GxEPD_BLACK);
+      display.drawLine(bx1 - 1, y0p, bx1 - 1, y1p - 1, GxEPD_BLACK);
     }
   }
 
-  // final right-edge hour tick (end of the window, e.g. the 24h mark)
-  {
-    int xEdge = static_cast<int>(xPos0 + HOURLY_GRAPH_MAX * xInterval);
-    display.drawLine(xEdge + MARGIN_X, yPos1 + 1 + MARGIN_Y, xEdge + MARGIN_X,
+  // temperature polyline (thick)
+  for (size_t k = 1; k < hHour.size(); ++k) {
+    int x0 = static_cast<int>(std::round(xOf(hHour[k - 1]))) + MARGIN_X;
+    int x1 = static_cast<int>(std::round(xOf(hHour[k]))) + MARGIN_X;
+    int y0 = yOf(hTemp[k - 1]) + MARGIN_Y;
+    int y1 = yOf(hTemp[k]) + MARGIN_Y;
+    display.drawLine(x0, y0, x1, y1, ACCENT_COLOR);
+    display.drawLine(x0, y0 + 1, x1, y1 + 1, ACCENT_COLOR);
+    display.drawLine(x0 - 1, y0, x1 - 1, y1, ACCENT_COLOR);
+  }
+
+  // x-axis hour ticks every 6h: 00 06 12 18 24
+  display.setFont(&FONT_8pt8b);
+  for (int hh = 0; hh <= 24; hh += 6) {
+    int xt = static_cast<int>(std::round(xOf((float)hh)));
+    display.drawLine(xt + MARGIN_X, yPos1 + 1 + MARGIN_Y, xt + MARGIN_X,
                      yPos1 + 4 + MARGIN_Y, GxEPD_BLACK);
-    display.drawLine(xEdge + 1 + MARGIN_X, yPos1 + 1 + MARGIN_Y,
-                     xEdge + 1 + MARGIN_X, yPos1 + 4 + MARGIN_Y, GxEPD_BLACK);
-    char tb[12] = {};
-    time_t tts = hourly[HOURLY_GRAPH_MAX].dt;
-    tm *tti = localtime(&tts);
-    _strftime(tb, sizeof(tb), HOUR_FORMAT, tti);
-    drawString(xEdge, yPos1 + 1 + 12 + 4 + 3, tb, CENTER);
+    display.drawLine(xt + 1 + MARGIN_X, yPos1 + 1 + MARGIN_Y, xt + 1 + MARGIN_X,
+                     yPos1 + 4 + MARGIN_Y, GxEPD_BLACK);
+    char tb[6];
+    snprintf(tb, sizeof(tb), "%02d", hh);
+    drawString(xt, yPos1 + 1 + 12 + 4 + 3, String(tb), CENTER);
   }
   return;
 }
