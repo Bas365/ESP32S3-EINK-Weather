@@ -10,6 +10,7 @@
 #include "config.h"
 #include "conversions.h"
 #include "display_utils.h"
+#include "history.h"
 #include <SPI.h>
 
 // fonts
@@ -599,12 +600,31 @@ void drawOutlookGraph(const owm_hourly_t *hourly, const owm_daily_t *daily,
   const int yPos0 = GRAPH_Y0 + 32; // top of plot
   const int yPos1 = H - 18;        // baseline (room for hour labels)
 
-  // --- collect TODAY's 3-hourly points (local time, 00:00..24:00) ----------
+  // --- assemble TODAY's curve: recorded actuals (past) + forecast (future) --
   const int todayYday = timeInfo.tm_yday;
   const int todayYear = timeInfo.tm_year;
   std::vector<float> hHour;    // hour-of-day, 0..24
   std::vector<float> hTemp;    // temperature in display unit
   std::vector<float> hPrecip;  // precip value (% for POP, else mm)
+
+  // 1) recorded history for hours already elapsed today
+  int lastRecHour = -1;
+  for (int h = 0; h < 24; ++h) {
+    if (!historyHas(h))
+      continue;
+    hHour.push_back((float)h);
+#ifdef UNITS_TEMP_CELSIUS
+    hTemp.push_back(kelvin_to_celsius(historyTempK(h)));
+#elif defined(UNITS_TEMP_FAHRENHEIT)
+    hTemp.push_back(kelvin_to_fahrenheit(historyTempK(h)));
+#else
+    hTemp.push_back(historyTempK(h));
+#endif
+    hPrecip.push_back((float)historyPop(h));
+    lastRecHour = h;
+  }
+
+  // 2) forecast for the rest of today (+ next midnight as hour 24)
   for (int i = 0; i < OWM_NUM_HOURLY; ++i) {
     time_t ts = hourly[i].dt;
     tm lt = *localtime(&ts);
@@ -613,13 +633,15 @@ void drawOutlookGraph(const owm_hourly_t *hourly, const owm_daily_t *daily,
     bool nextMidnight = (!sameDay) && (lt.tm_hour == 0) &&
                         ((lt.tm_year > todayYear) || (lt.tm_yday == todayYday + 1));
     if (sameDay) {
+      if (hod <= lastRecHour + 0.01f)
+        continue; // already have a recorded actual for this hour
       hHour.push_back(hod);
     } else if (nextMidnight) {
       hHour.push_back(24.0f); // close the curve at the right edge
     } else if (!hHour.empty()) {
-      break; // we've passed the end of today
+      break; // past the end of today
     } else {
-      continue; // entries before today (shouldn't occur) — skip
+      continue;
     }
 #ifdef UNITS_TEMP_CELSIUS
     hTemp.push_back(kelvin_to_celsius(hourly[i].temp));
@@ -757,7 +779,7 @@ void drawOutlookGraph(const owm_hourly_t *hourly, const owm_daily_t *daily,
 
   // x-axis hour ticks every 6h: 00 06 12 18 24
   display.setFont(&FONT_8pt8b);
-  for (int hh = 0; hh <= 24; hh += 6) {
+  for (int hh = 0; hh <= 24; hh += 3) {
     int xt = static_cast<int>(std::round(xOf((float)hh)));
     display.drawLine(xt + MARGIN_X, yPos1 + 1 + MARGIN_Y, xt + MARGIN_X,
                      yPos1 + 4 + MARGIN_Y, GxEPD_BLACK);

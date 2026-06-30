@@ -17,6 +17,7 @@
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
+#include "history.h"
 #include <PubSubClient.h>
 #include <WiFi.h>
 // WiFiManager removed for memory savings - using direct WiFi.begin()
@@ -897,6 +898,10 @@ void setup() {
   getRefreshTimeStr(refreshTimeStr, timeConfigured, &timeInfo);
   String dateStr;
   getDateStr(dateStr, &timeInfo);
+
+  // Record today's hourly temp/precip into history for the outlook graph.
+  historyUpdate(owm_onecall.current.temp, owm_onecall.hourly[0].pop * 100.0f,
+                timeInfo);
 
   // RENDER WEATHER DISPLAY
   watchdogCheckAndSleep(startTime, 30);
