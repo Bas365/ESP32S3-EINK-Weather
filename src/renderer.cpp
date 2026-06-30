@@ -99,6 +99,48 @@ void drawBmp(int16_t x, int16_t y, const uint8_t *bitmap, int16_t w, int16_t h,
   display.drawInvertedBitmap(x + MARGIN_X, y + MARGIN_Y, bitmap, w, h, color);
 }
 
+// =============================================================================
+// HERO LAYOUT ("EInk Weather Variations" 1a) — geometry + margin-aware drawing
+// All coordinates below are in the effective (post-margin) coordinate space:
+//   origin (0,0) = top-left of the usable panel, size EFF_WIDTH x EFF_HEIGHT.
+// The m*() helpers add the MARGIN offsets so callers stay in panel space.
+// =============================================================================
+namespace hero {
+  const int W          = EFF_WIDTH;       // 760
+  const int H          = EFF_HEIGHT;      // 456
+  const int STATUS_H   = 34;              // top status bar height
+  const int BODY_Y0    = STATUS_H;        // 34
+  const int BODY_Y1    = 270;             // bottom of current/forecast body
+  const int LCOL_W     = 354;             // left (current conditions) column
+  const int METRIC_H   = 88;              // bottom metric strip in left column
+  const int METRIC_Y0  = BODY_Y1 - METRIC_H; // 182
+  const int GRAPH_Y0   = BODY_Y1;         // 270 (top of hourly graph)
+}
+
+/* Margin-aware horizontal line of thickness t. */
+static void mHLine(int x0, int x1, int y, int t = 1, uint16_t c = GxEPD_BLACK) {
+  for (int i = 0; i < t; ++i)
+    display.drawLine(x0 + MARGIN_X, y + i + MARGIN_Y,
+                     x1 + MARGIN_X, y + i + MARGIN_Y, c);
+}
+
+/* Margin-aware vertical line of thickness t. */
+static void mVLine(int x, int y0, int y1, int t = 1, uint16_t c = GxEPD_BLACK) {
+  for (int i = 0; i < t; ++i)
+    display.drawLine(x + i + MARGIN_X, y0 + MARGIN_Y,
+                     x + i + MARGIN_X, y1 + MARGIN_Y, c);
+}
+
+/* Margin-aware filled rectangle. */
+static void mFillRect(int x, int y, int w, int h, uint16_t c = GxEPD_BLACK) {
+  display.fillRect(x + MARGIN_X, y + MARGIN_Y, w, h, c);
+}
+
+/* Margin-aware single pixel. */
+static inline void mPixel(int x, int y, uint16_t c = GxEPD_BLACK) {
+  display.drawPixel(x + MARGIN_X, y + MARGIN_Y, c);
+}
+
 /* Draws a string that will flow into the next line when max_width is reached.
  */
 void drawMultiLnString(int16_t x, int16_t y, const String &text,
@@ -206,263 +248,226 @@ void powerOffDisplay() {
   return;
 }
 
-/* Draw current conditions */
+/* Convert a Kelvin temperature to an int in the configured unit. */
+static int tempToUnitInt(float kelvin) {
+#ifdef UNITS_TEMP_CELSIUS
+  return static_cast<int>(std::round(kelvin_to_celsius(kelvin)));
+#elif defined(UNITS_TEMP_FAHRENHEIT)
+  return static_cast<int>(std::round(kelvin_to_fahrenheit(kelvin)));
+#else
+  return static_cast<int>(std::round(kelvin));
+#endif
+}
+
+/* Convert a m/s wind speed to an int in the configured unit. */
+static int windToUnitInt(float ms) {
+#ifdef UNITS_SPEED_KILOMETERSPERHOUR
+  return static_cast<int>(std::round(meterspersecond_to_kilometersperhour(ms)));
+#elif defined(UNITS_SPEED_MILESPERHOUR)
+  return static_cast<int>(std::round(meterspersecond_to_milesperhour(ms)));
+#elif defined(UNITS_SPEED_KNOTS)
+  return static_cast<int>(std::round(meterspersecond_to_knots(ms)));
+#elif defined(UNITS_SPEED_BEAUFORT)
+  return static_cast<int>(meterspersecond_to_beaufort(ms));
+#elif defined(UNITS_SPEED_FEETPERSECOND)
+  return static_cast<int>(std::round(meterspersecond_to_feetpersecond(ms)));
+#else
+  return static_cast<int>(std::round(ms));
+#endif
+}
+
+/* Draw current conditions — Hero layout left column.
+ * Big-number current temperature + icon, HIGH/LOW, condition + feels-like, and
+ * a 4-cell metric strip (wind / humidity / UV / sun). Also draws the structural
+ * dividers for the body: the vertical split to the 5-day column and the metric
+ * strip's top rule.
+ */
 void drawCurrentConditions(const owm_current_t &current,
                            const owm_daily_t &today,
                            const owm_resp_air_pollution_t &owm_air_pollution,
                            bool airPollutionSuccess, float inTemp,
                            float inHumidity) {
-  String dataStr, unitStr;
+  using namespace hero;
+  String dataStr;
+  char timeBuffer[12] = {};
 
-  // current weather icon
-  drawBmp(0, 0, getCurrentConditionsBitmap196(current, today), 196, 196,
+  // ---- structural dividers ------------------------------------------------
+  // vertical split between current column and 5-day column
+  mVLine(LCOL_W, BODY_Y0, BODY_Y1, 2);
+  // metric strip top rule (left column only)
+  mHLine(0, LCOL_W, METRIC_Y0, 2);
+
+  // ---- weather icon + big temperature ------------------------------------
+  drawBmp(8, 56, getCurrentConditionsBitmap64(current, today), 64, 64,
           GxEPD_BLACK);
 
-  // current temp
-#ifdef UNITS_TEMP_KELVIN
-  dataStr = String(static_cast<int>(std::round(current.temp)));
-  unitStr = TXT_UNITS_TEMP_KELVIN;
-#endif
-#ifdef UNITS_TEMP_CELSIUS
-  dataStr =
-      String(static_cast<int>(std::round(kelvin_to_celsius(current.temp))));
-  unitStr = TXT_UNITS_TEMP_CELSIUS;
-#endif
-#ifdef UNITS_TEMP_FAHRENHEIT
-  dataStr =
-      String(static_cast<int>(std::round(kelvin_to_fahrenheit(current.temp))));
-  unitStr = TXT_UNITS_TEMP_FAHRENHEIT;
-#endif
+  const int tempBaseY = 128;
   display.setFont(&FONT_48pt8b_temperature);
-#ifndef DISP_BW_V1
-  drawString(196 + 164 / 2 - 20, 196 / 2 + 69 / 2, dataStr, CENTER);
-#else
-  drawString(156 + 164 / 2 - 20, 196 / 2 + 69 / 2, dataStr, CENTER);
-#endif
+  dataStr = String(tempToUnitInt(current.temp));
+  drawString(82, tempBaseY, dataStr, LEFT);
+  int afterTempX = display.getCursorX() - MARGIN_X;
   display.setFont(&FONT_14pt8b);
-  drawString(display.getCursorX() - MARGIN_X, 196 / 2 - 69 / 2 + 20, unitStr,
-             LEFT);
-
-  // current feels like
-#ifdef UNITS_TEMP_KELVIN
-  dataStr = String(TXT_FEELS_LIKE) + ' ' +
-            String(static_cast<int>(std::round(current.feels_like)));
-#endif
+#if defined(UNITS_TEMP_CELSIUS) || defined(UNITS_TEMP_FAHRENHEIT)
+  drawString(afterTempX + 4, tempBaseY - 36, String("\260"), LEFT);
+  int degX = display.getCursorX() - MARGIN_X;
+  display.setFont(&FONT_12pt8b);
 #ifdef UNITS_TEMP_CELSIUS
-  dataStr = String(TXT_FEELS_LIKE) + ' ' +
-            String(static_cast<int>(
-                std::round(kelvin_to_celsius(current.feels_like)))) +
-            '\260';
-#endif
-#ifdef UNITS_TEMP_FAHRENHEIT
-  dataStr = String(TXT_FEELS_LIKE) + ' ' +
-            String(static_cast<int>(
-                std::round(kelvin_to_fahrenheit(current.feels_like)))) +
-            '\260';
-#endif
-  display.setFont(&FONT_12pt8b);
-#ifndef DISP_BW_V1
-  drawString(196 + 164 / 2, 98 + 69 / 2 + 12 + 17, dataStr, CENTER);
+  drawString(degX, tempBaseY - 36, "C", LEFT);
 #else
-  drawString(156 + 164 / 2, 98 + 69 / 2 + 12 + 17, dataStr, CENTER);
+  drawString(degX, tempBaseY - 36, "F", LEFT);
+#endif
 #endif
 
-  // current weather data icons (moved up 17px total)
-  const int lowerY = 187; // was 204, moved up 17px
-  drawBmp(0, lowerY + (48 + 8) * 0, wi_sunrise_48x48, 48, 48, GxEPD_BLACK);
-  drawBmp(0, lowerY + (48 + 8) * 1, wi_strong_wind_48x48, 48, 48, GxEPD_BLACK);
-  drawBmp(0, lowerY + (48 + 8) * 2, wi_day_sunny_48x48, 48, 48, GxEPD_BLACK);
-  drawBmp(170, lowerY + (48 + 8) * 0, wi_sunset_48x48, 48, 48, GxEPD_BLACK);
-  drawBmp(170, lowerY + (48 + 8) * 1, wi_humidity_48x48, 48, 48, GxEPD_BLACK);
-  drawBmp(170, lowerY + (48 + 8) * 2, wi_barometer_48x48, 48, 48, GxEPD_BLACK);
+  // ---- HIGH / LOW (right edge of left column) -----------------------------
+  String hiStr = String(tempToUnitInt(today.temp.max)) + "\260";
+  String loStr = String(tempToUnitInt(today.temp.min)) + "\260";
+  const int hlRight = LCOL_W - 12;
+  display.setFont(&FONT_6pt8b);
+  drawString(hlRight, 72, "HIGH", RIGHT);
+  display.setFont(&FONT_20pt8b);
+  drawString(hlRight, 100, hiStr, RIGHT);
+  display.setFont(&FONT_6pt8b);
+  drawString(hlRight, 132, "LOW", RIGHT);
+  display.setFont(&FONT_20pt8b);
+  drawString(hlRight, 160, loStr, RIGHT);
 
-  // current weather data labels
-  display.setFont(&FONT_7pt8b);
-  drawString(48, lowerY + 10 + (48 + 8) * 0, TXT_SUNRISE, LEFT);
-  drawString(48, lowerY + 10 + (48 + 8) * 1, TXT_WIND, LEFT);
-  drawString(48, lowerY + 10 + (48 + 8) * 2, TXT_UV_INDEX, LEFT);
-  drawString(170 + 48, lowerY + 10 + (48 + 8) * 0, TXT_SUNSET, LEFT);
-  drawString(170 + 48, lowerY + 10 + (48 + 8) * 1, TXT_HUMIDITY, LEFT);
-  drawString(170 + 48, lowerY + 10 + (48 + 8) * 2, TXT_PRESSURE, LEFT);
+  // ---- condition + feels like (row above metric strip) --------------------
+  String condStr = current.weather.main;
+  if (!current.weather.description.isEmpty())
+    condStr = current.weather.description;
+  toTitleCase(condStr);
+  String feelsStr =
+      String(TXT_FEELS_LIKE) + " " + String(tempToUnitInt(current.feels_like)) +
+      "\260";
+  display.setFont(&FONT_11pt8b);
+  int feelsW = getStringWidth(feelsStr);
+  display.setFont(&FONT_14pt8b);
+  drawMultiLnString(12, METRIC_Y0 - 12, condStr, LEFT,
+                    LCOL_W - 24 - feelsW - 8, 1, 0);
+  display.setFont(&FONT_11pt8b);
+  drawString(LCOL_W - 12, METRIC_Y0 - 12, feelsStr, RIGHT);
 
-  // sunrise
-  display.setFont(&FONT_12pt8b);
-  char timeBuffer[12] = {};
-  time_t ts = current.sunrise;
-  tm *timeInfo = localtime(&ts);
-  _strftime(timeBuffer, sizeof(timeBuffer), TIME_FORMAT, timeInfo);
-  drawString(48, lowerY + 17 / 2 + (48 + 8) * 0 + 48 / 2, timeBuffer, LEFT);
+  // ---- metric strip (4 cells) --------------------------------------------
+  const int cellW = LCOL_W / 4; // 88
+  const int iconY = METRIC_Y0 + 8;
+  const int valY = METRIC_Y0 + 58;
+  const int lblY = METRIC_Y0 + 76;
+  for (int i = 1; i < 4; ++i)
+    mVLine(i * cellW, METRIC_Y0 + 6, BODY_Y1 - 6, 1, GxEPD_BLACK);
 
-  // wind
-#ifdef WIND_INDICATOR_ARROW
-  drawBmp(48, lowerY + 24 / 2 + (48 + 8) * 1, getWindBitmap24(current.wind_deg),
-          24, 24, GxEPD_BLACK);
-#endif
-#ifdef UNITS_SPEED_METERSPERSECOND
-  dataStr = String(static_cast<int>(std::round(current.wind_speed)));
-  unitStr = String(" ") + TXT_UNITS_SPEED_METERSPERSECOND;
-#endif
-#ifdef UNITS_SPEED_MILESPERHOUR
-  dataStr = String(static_cast<int>(
-      std::round(meterspersecond_to_milesperhour(current.wind_speed))));
-  unitStr = String(" ") + TXT_UNITS_SPEED_MILESPERHOUR;
-#endif
+  // cell 0: wind
+  int cx = 0 * cellW + cellW / 2;
+  drawBmp(cx - 16, iconY, wi_strong_wind_32x32, 32, 32, GxEPD_BLACK);
+  display.setFont(&FONT_14pt8b);
+  drawString(cx, valY, String(windToUnitInt(current.wind_speed)), CENTER);
+  display.setFont(&FONT_6pt8b);
 #ifdef UNITS_SPEED_KILOMETERSPERHOUR
-  dataStr = String(static_cast<int>(
-      std::round(meterspersecond_to_kilometersperhour(current.wind_speed))));
-  unitStr = String(" ") + TXT_UNITS_SPEED_KILOMETERSPERHOUR;
-#endif
-#ifdef UNITS_SPEED_KNOTS
-  dataStr = String(static_cast<int>(
-      std::round(meterspersecond_to_knots(current.wind_speed))));
-  unitStr = String(" ") + TXT_UNITS_SPEED_KNOTS;
-#endif
-#ifdef UNITS_SPEED_FEETPERSECOND
-  dataStr = String(static_cast<int>(
-      std::round(meterspersecond_to_feetpersecond(current.wind_speed))));
-  unitStr = String(" ") + TXT_UNITS_SPEED_FEETPERSECOND;
-#endif
-#ifdef UNITS_SPEED_BEAUFORT
-  dataStr = String(meterspersecond_to_beaufort(current.wind_speed));
-  unitStr = String(" ") + TXT_UNITS_SPEED_BEAUFORT;
-#endif
-
-#ifdef WIND_INDICATOR_ARROW
-  drawString(48 + 24, lowerY + 17 / 2 + (48 + 8) * 1 + 48 / 2, dataStr, LEFT);
+  dataStr = String("KM/H ");
+#elif defined(UNITS_SPEED_MILESPERHOUR)
+  dataStr = String("MPH ");
 #else
-  drawString(48, lowerY + 17 / 2 + (48 + 8) * 1 + 48 / 2, dataStr, LEFT);
+  dataStr = String("WIND ");
 #endif
-  display.setFont(&FONT_8pt8b);
-  drawString(display.getCursorX() - MARGIN_X,
-             lowerY + 17 / 2 + (48 + 8) * 1 + 48 / 2, unitStr, LEFT);
+  dataStr += String(getCompassPointNotation(current.wind_deg));
+  drawString(cx, lblY, dataStr, CENTER);
 
-  // uv index
-  const int sp = 8;
-  display.setFont(&FONT_12pt8b);
+  // cell 1: humidity
+  cx = 1 * cellW + cellW / 2;
+  drawBmp(cx - 16, iconY, wi_humidity_32x32, 32, 32, GxEPD_BLACK);
+  display.setFont(&FONT_14pt8b);
+  drawString(cx, valY, String(current.humidity) + "%", CENTER);
+  display.setFont(&FONT_6pt8b);
+  drawString(cx, lblY, "HUMIDITY", CENTER);
+
+  // cell 2: UV index
+  cx = 2 * cellW + cellW / 2;
+  drawBmp(cx - 16, iconY, wi_day_sunny_32x32, 32, 32, GxEPD_BLACK);
   unsigned int uvi =
       static_cast<unsigned int>(std::max(std::round(current.uvi), 0.0f));
-  dataStr = String(uvi);
-  drawString(48, lowerY + 17 / 2 + (48 + 8) * 2 + 48 / 2, dataStr, LEFT);
-  display.setFont(&FONT_7pt8b);
-  dataStr = String(getUVIdesc(uvi));
-  int max_w = 170 - (display.getCursorX() - MARGIN_X + sp);
-  if (getStringWidth(dataStr) <= max_w) {
-    drawString(display.getCursorX() - MARGIN_X + sp,
-               lowerY + 17 / 2 + (48 + 8) * 2 + 48 / 2, dataStr, LEFT);
-  } else {
-    display.setFont(&FONT_5pt8b);
-    if (getStringWidth(dataStr) <= max_w) {
-      drawString(display.getCursorX() - MARGIN_X + sp,
-                 lowerY + 17 / 2 + (48 + 8) * 2 + 48 / 2, dataStr, LEFT);
-    } else {
-      drawMultiLnString(display.getCursorX() - MARGIN_X + sp,
-                        lowerY + 17 / 2 + (48 + 8) * 2 + 48 / 2 - 10, dataStr,
-                        LEFT, max_w, 2, 10);
-    }
-  }
+  display.setFont(&FONT_14pt8b);
+  drawString(cx, valY, String(uvi), CENTER);
+  display.setFont(&FONT_6pt8b);
+  dataStr = String("UV ") + String(getUVIdesc(uvi));
+  dataStr.toUpperCase();
+  drawString(cx, lblY, dataStr, CENTER);
 
-  // sunset
+  // cell 3: sunrise / sunset
+  int cellX = 3 * cellW;
+  drawBmp(cellX + 6, METRIC_Y0 + 8, wi_sunrise_32x32, 32, 32, GxEPD_BLACK);
+  drawBmp(cellX + 6, METRIC_Y0 + 46, wi_sunset_32x32, 32, 32, GxEPD_BLACK);
+  display.setFont(&FONT_11pt8b);
+  time_t ts = current.sunrise;
+  tm *ti = localtime(&ts);
+  _strftime(timeBuffer, sizeof(timeBuffer), TIME_FORMAT, ti);
+  drawString(cellX + 42, METRIC_Y0 + 30, timeBuffer, LEFT);
   memset(timeBuffer, '\0', sizeof(timeBuffer));
   ts = current.sunset;
-  timeInfo = localtime(&ts);
-  _strftime(timeBuffer, sizeof(timeBuffer), TIME_FORMAT, timeInfo);
-  drawString(170 + 48, lowerY + 17 / 2 + (48 + 8) * 0 + 48 / 2, timeBuffer,
-             LEFT);
-
-  // humidity
-  dataStr = String(current.humidity);
-  drawString(170 + 48, lowerY + 17 / 2 + (48 + 8) * 1 + 48 / 2, dataStr, LEFT);
-  display.setFont(&FONT_8pt8b);
-  drawString(display.getCursorX() - MARGIN_X,
-             lowerY + 17 / 2 + (48 + 8) * 1 + 48 / 2, "%", LEFT);
-
-  // pressure
-#ifdef UNITS_PRES_HECTOPASCALS
-  dataStr = String(current.pressure);
-  unitStr = String(" ") + TXT_UNITS_PRES_HECTOPASCALS;
-#endif
-#ifdef UNITS_PRES_MILLIBARS
-  dataStr = String(static_cast<int>(
-      std::round(hectopascals_to_millibars(current.pressure))));
-  unitStr = String(" ") + TXT_UNITS_PRES_MILLIBARS;
-#endif
-#ifdef UNITS_PRES_INCHESOFMERCURY
-  dataStr = String(
-      std::round(1e1f * hectopascals_to_inchesofmercury(current.pressure)) /
-          1e1f,
-      1);
-  unitStr = String(" ") + TXT_UNITS_PRES_INCHESOFMERCURY;
-#endif
-  display.setFont(&FONT_12pt8b);
-  drawString(170 + 48, lowerY + 17 / 2 + (48 + 8) * 2 + 48 / 2, dataStr, LEFT);
-  display.setFont(&FONT_8pt8b);
-  drawString(display.getCursorX() - MARGIN_X,
-             lowerY + 17 / 2 + (48 + 8) * 2 + 48 / 2, unitStr, LEFT);
+  ti = localtime(&ts);
+  _strftime(timeBuffer, sizeof(timeBuffer), TIME_FORMAT, ti);
+  drawString(cellX + 42, METRIC_Y0 + 68, timeBuffer, LEFT);
 
   return;
 }
 
-/* Draw 5-day forecast */
+/* Draw 5-day forecast — Hero layout right column (vertical list).
+ * Each row: weekday, condition icon, hi/lo, condition text, precip %, wind.
+ */
 void drawForecast(const owm_daily_t *daily, tm timeInfo) {
-  String hiStr, loStr;
-  String dataStr, unitStr;
-  for (int i = 0; i < 5; ++i) {
-#ifndef DISP_BW_V1
-    int x = 381 + (i * 82); // was 398, moved left 17px total
-#else
-    int x = 301 + (i * 64); // was 318, moved left 17px total
-#endif
-    drawBmp(x, 98 + 69 / 2 - 32 - 6, getDailyForecastBitmap64(daily[i]), 64, 64,
-            GxEPD_BLACK);
+  using namespace hero;
+  const int colX = LCOL_W;             // 354
+  const int colR = W;                  // 760
+  const int padL = colX + 14;          // left text inset
+  const int padR = colR - 6;           // right inset
+  const int headY0 = BODY_Y0;          // 34
+  const int headH = 24;
+  const int rowsY0 = headY0 + headH;   // 58
+  const int rowsH = BODY_Y1 - rowsY0;  // 212
+  const float rowH = rowsH / 5.0f;     // ~42.4
 
+  // header
+  display.setFont(&FONT_8pt8b);
+  drawString(padL, headY0 + 16, "5-DAY FORECAST", LEFT);
+  display.setFont(&FONT_6pt8b);
+  drawString(padR, headY0 + 16, "WIND", RIGHT);
+  drawString(padR - 96, headY0 + 16, "PRECIP", RIGHT);
+
+  String dataStr;
+  for (int i = 0; i < 5; ++i) {
+    int rowTop = rowsY0 + static_cast<int>(std::round(i * rowH));
+    int rowBot = rowsY0 + static_cast<int>(std::round((i + 1) * rowH));
+    int yc = (rowTop + rowBot) / 2;     // vertical center
+    int baseY = yc + 6;                 // text baseline approx
+    mHLine(colX, colR, rowTop, 1, GxEPD_BLACK);
+
+    // weekday
     display.setFont(&FONT_11pt8b);
     char dayBuffer[8] = {};
     _strftime(dayBuffer, sizeof(dayBuffer), "%a", &timeInfo);
-    drawString(x + 31 - 2, 98 + 69 / 2 - 32 - 26 - 6 + 16, dayBuffer, CENTER);
+    drawString(padL, baseY, dayBuffer, LEFT);
     timeInfo.tm_wday = (timeInfo.tm_wday + 1) % 7;
 
-    display.setFont(&FONT_8pt8b);
-    drawString(x + 31, 98 + 69 / 2 + 38 - 6 + 12, "|", CENTER);
-#ifdef UNITS_TEMP_CELSIUS
-    hiStr = String(static_cast<int>(
-                std::round(kelvin_to_celsius(daily[i].temp.max)))) +
-            "\260";
-    loStr = String(static_cast<int>(
-                std::round(kelvin_to_celsius(daily[i].temp.min)))) +
-            "\260";
-#endif
-#ifdef UNITS_TEMP_FAHRENHEIT
-    hiStr = String(static_cast<int>(
-                std::round(kelvin_to_fahrenheit(daily[i].temp.max)))) +
-            "\260";
-    loStr = String(static_cast<int>(
-                std::round(kelvin_to_fahrenheit(daily[i].temp.min)))) +
-            "\260";
-#endif
-#ifdef UNITS_TEMP_KELVIN
-    hiStr = String(static_cast<int>(std::round(daily[i].temp.max)));
-    loStr = String(static_cast<int>(std::round(daily[i].temp.min)));
-#endif
-    drawString(x + 31 - 4, 98 + 69 / 2 + 38 - 6 + 12, hiStr, RIGHT);
-    drawString(x + 31 + 5, 98 + 69 / 2 + 38 - 6 + 12, loStr, LEFT);
+    // condition icon
+    drawBmp(colX + 52, yc - 16, getDailyForecastBitmap32(daily[i]), 32, 32,
+            GxEPD_BLACK);
 
-    // Show rain in mm (only if there's rain)
-    float dailyRain =
-        daily[i].rain + daily[i].snow; // Total precipitation in mm
-    if (dailyRain >= 0.5f) {
-      // Show rain amount if >= 0.5mm
-      display.setFont(&FONT_6pt8b);
-      dataStr = String(static_cast<int>(std::round(dailyRain))) + "mm";
-      drawString(x + 31, 98 + 69 / 2 + 38 - 6 + 28, dataStr,
-                 CENTER); // +2px down
-    } else if (dailyRain > 0.0f) {
-      // Show <1mm for trace amounts
-      display.setFont(&FONT_6pt8b);
-      dataStr = "<1mm";
-      drawString(x + 31, 98 + 69 / 2 + 38 - 6 + 28, dataStr,
-                 CENTER); // +2px down
-    }
-    // If 0mm, show nothing (blank)
+    // hi / lo
+    String hiStr = String(tempToUnitInt(daily[i].temp.max)) + "\260";
+    String loStr = String(tempToUnitInt(daily[i].temp.min)) + "\260";
+    display.setFont(&FONT_12pt8b);
+    drawString(colX + 92, baseY, hiStr, LEFT);
+    int loX = display.getCursorX() - MARGIN_X + 4;
+    display.setFont(&FONT_9pt8b);
+    drawString(loX, baseY, loStr, LEFT);
+
+    // wind (far right): direction + speed
+    display.setFont(&FONT_9pt8b);
+    dataStr = String(getCompassPointNotation(daily[i].wind_deg)) + " " +
+              String(windToUnitInt(daily[i].wind_speed));
+    drawString(padR, baseY, dataStr, RIGHT);
+
+    // precip probability
+    int pop = static_cast<int>(std::round(daily[i].pop * 100.0f));
+    drawString(padR - 96, baseY, String(pop) + "%", RIGHT);
   }
   return;
 }
@@ -501,33 +506,17 @@ void drawAlerts(std::vector<owm_alerts_t> &alerts, const String &city,
     }
   }
 
-  if (num_valid_alerts == 1) {
-    max_w -= 48;
+  // Hero layout has no dedicated alert band. Show at most one alert as a
+  // single compact line just under the status bar, on the left, so it never
+  // collides with the current-conditions block.
+  using namespace hero;
+  if (num_valid_alerts >= 1) {
     owm_alerts_t &cur_alert = alerts[alert_indices[0]];
-    drawBmp(196, 8, getAlertBitmap48(cur_alert), 48, 48, ACCENT_COLOR);
     toTitleCase(cur_alert.event);
-    display.setFont(&FONT_14pt8b);
-    if (getStringWidth(cur_alert.event) <= max_w) {
-      drawString(196 + 48 + 4, 24 + 8 - 12 + 20 + 1, cur_alert.event, LEFT);
-    } else {
-      display.setFont(&FONT_12pt8b);
-      if (getStringWidth(cur_alert.event) <= max_w) {
-        drawString(196 + 48 + 4, 24 + 8 - 12 + 17 + 1, cur_alert.event, LEFT);
-      } else {
-        drawMultiLnString(196 + 48 + 4, 24 + 8 - 12 + 17 - 11, cur_alert.event,
-                          LEFT, max_w, 2, 23);
-      }
-    }
-  } else if (num_valid_alerts >= 2) {
-    max_w -= 32;
-    display.setFont(&FONT_12pt8b);
-    for (int i = 0; i < 2; ++i) {
-      owm_alerts_t &cur_alert = alerts[alert_indices[i]];
-      drawBmp(196, (i * 32), getAlertBitmap32(cur_alert), 32, 32, ACCENT_COLOR);
-      toTitleCase(cur_alert.event);
-      drawMultiLnString(196 + 32 + 3, 5 + 17 + (i * 32), cur_alert.event, LEFT,
-                        max_w, 1, 0);
-    }
+    drawBmp(8, STATUS_H + 4, getAlertBitmap32(cur_alert), 32, 32, ACCENT_COLOR);
+    display.setFont(&FONT_11pt8b);
+    drawMultiLnString(46, STATUS_H + 25, cur_alert.event, LEFT, LCOL_W - 60, 1,
+                      0, ACCENT_COLOR);
   }
 
   free(ignore_list);
@@ -535,13 +524,20 @@ void drawAlerts(std::vector<owm_alerts_t> &alerts, const String &city,
   return;
 }
 
-/* Draw location and date - positioned relative to right edge */
+/* Draw status bar left + center — Hero layout.
+ * City (left) and date (center) inside the top status bar, plus the status
+ * bar's bottom rule that spans the full panel width.
+ */
 void drawLocationDate(const String &city, const String &date) {
-  // These are positioned from the right edge, need to account for right margin
-  display.setFont(&FONT_16pt8b);
-  drawString(EFF_WIDTH - 2, 23, city, RIGHT, ACCENT_COLOR);
+  using namespace hero;
+  // status bar bottom rule
+  mHLine(0, W, STATUS_H, 2, GxEPD_BLACK);
+  // city (left)
   display.setFont(&FONT_12pt8b);
-  drawString(EFF_WIDTH - 2, 30 + 4 + 17, date, RIGHT);
+  drawString(4, 24, city, LEFT, ACCENT_COLOR);
+  // date (center)
+  display.setFont(&FONT_11pt8b);
+  drawString(W / 2, 24, date, CENTER);
   return;
 }
 
@@ -569,16 +565,41 @@ int kelvin_to_plot_y(float kelvin, int tempBoundMin, float yPxPerUnit,
 #endif
 }
 
-/* Draw outlook graph */
+/* Draw outlook graph — Hero layout full-width hourly temp + precip.
+ * Temperature as a line (left axis, °), precipitation as hatched bars
+ * (right axis, %), hourly tick labels along the bottom, with a header row.
+ */
 void drawOutlookGraph(const owm_hourly_t *hourly, const owm_daily_t *daily,
                       tm timeInfo) {
-  const int xPos0 = 350;
-  int xPos1 = EFF_WIDTH;
-  const int yPos0 = 216;
-  const int yPos1 = EFF_HEIGHT - 46;
+  using namespace hero;
+
+  // top rule + header row
+  mHLine(0, W, GRAPH_Y0, 2, GxEPD_BLACK);
+  display.setFont(&FONT_6pt8b);
+  // left legend: filled square + TEMP
+  mFillRect(8, GRAPH_Y0 + 11, 9, 9, GxEPD_BLACK);
+  drawString(22, GRAPH_Y0 + 19, "TEMP \260", LEFT);
+  // center title
+  display.setFont(&FONT_8pt8b);
+  drawString(W / 2, GRAPH_Y0 + 19, "TODAY \267 HOURLY", CENTER);
+  // right legend: hatched square + PRECIP
+  display.setFont(&FONT_6pt8b);
+  for (int yy = 0; yy < 9; ++yy)
+    for (int xx = 0; xx < 9; ++xx)
+      if (((xx + yy) & 3) == 0)
+        mPixel(W - 86 + xx, GRAPH_Y0 + 11 + yy, GxEPD_BLACK);
+  display.drawRect(W - 86 + MARGIN_X, GRAPH_Y0 + 11 + MARGIN_Y, 9, 9,
+                   GxEPD_BLACK);
+  drawString(W - 74, GRAPH_Y0 + 19, "PRECIP %", LEFT);
+
+  // plot area
+  const int xPos0 = 30;            // room for left temp labels
+  int xPos1 = W - 32;              // room for right precip labels
+  const int yPos0 = GRAPH_Y0 + 32; // top of plot
+  const int yPos1 = H - 18;        // baseline (room for hour labels)
 
   // Calculate bounds
-  int yMajorTicks = 5;
+  int yMajorTicks = 4;
 #ifdef UNITS_TEMP_CELSIUS
   float tempMin = kelvin_to_celsius(hourly[0].temp);
 #endif
@@ -649,15 +670,11 @@ void drawOutlookGraph(const owm_hourly_t *hourly, const owm_daily_t *daily,
   Serial.println("Loop 2 complete.");
 
 #ifdef UNITS_HOURLY_PRECIP_POP
-  xPos1 = EFF_WIDTH - 23;
   float precipBoundMax = (precipMax > 0) ? 100.0f : 0.0f;
 #else
-  xPos1 = EFF_WIDTH - 24;
   float precipBoundMax = std::ceil(precipMax);
 #endif
-
-  if (precipBoundMax > 0)
-    xPos1 -= 23;
+  // xPos1 already reserves room for the right-hand precip axis labels.
 
   // Draw axes with offset
   display.drawLine(xPos0 + MARGIN_X, yPos1 + MARGIN_Y, xPos1 + MARGIN_X,
@@ -743,12 +760,22 @@ void drawOutlookGraph(const owm_hourly_t *hourly, const owm_daily_t *daily,
         MARGIN_Y;
     int y1_p = yPos1 + MARGIN_Y;
 
-    // Only draw precipitation bars if there's precipitation to show
+    // Only draw precipitation bars if there's precipitation to show.
+    // Diagonal-hatch fill + outline to match the design's precip bars.
     if (precipBoundMax > 0 && precipVal > 0) {
-      for (int y = y1_p - 1; y > y0_p; y -= 2) {
-        for (int x = x0_p + (x0_p % 2); x < x1_p; x += 2) {
-          display.drawPixel(x, y, GxEPD_BLACK);
+      int bx0 = x0_p + 1;
+      int bx1 = x1_p - 1;
+      if (bx1 > bx0) {
+        for (int y = y0_p; y < y1_p; ++y) {
+          for (int x = bx0; x < bx1; ++x) {
+            if (((x + y) & 3) == 0)
+              display.drawPixel(x, y, GxEPD_BLACK);
+          }
         }
+        // outline
+        display.drawLine(bx0, y0_p, bx1 - 1, y0_p, GxEPD_BLACK);
+        display.drawLine(bx0, y0_p, bx0, y1_p - 1, GxEPD_BLACK);
+        display.drawLine(bx1 - 1, y0_p, bx1 - 1, y1_p - 1, GxEPD_BLACK);
       }
     }
 
@@ -767,68 +794,46 @@ void drawOutlookGraph(const owm_hourly_t *hourly, const owm_daily_t *daily,
   return;
 }
 
-/* Draw status bar - positioned relative to bottom edge */
+/* Draw status bar right side — Hero layout.
+ * Inside the top status bar, right-aligned: "Updated <time>", WiFi icon and
+ * battery icon + percentage.
+ */
 void drawStatusBar(const String &statusStr, const String &refreshTimeStr,
                    int rssi, uint32_t batVoltage) {
+  using namespace hero;
   String dataStr;
   uint16_t dataColor = GxEPD_BLACK;
-  display.setFont(&FONT_6pt8b);
-  int pos = EFF_WIDTH - 2;
-  const int sp = 2;
-  const int yBottom = EFF_HEIGHT - 1;
+  const int yMid = STATUS_H / 2;     // 17
+  const int textBase = yMid + 5;     // baseline for small text
+  const int sp = 6;
+  int pos = W - 4;
 
 #if BATTERY_MONITORING
   uint32_t batPercent =
       calcBatPercent(batVoltage, MIN_BATTERY_VOLTAGE, MAX_BATTERY_VOLTAGE);
-#if defined(DISP_3C_B) || defined(DISP_7C_F)
-  if (batVoltage < WARN_BATTERY_VOLTAGE)
-    dataColor = ACCENT_COLOR;
-#endif
-#if STATUS_BAR_EXTRAS_BAT_PERCENTAGE || STATUS_BAR_EXTRAS_BAT_VOLTAGE
-  dataStr = "";
 #if STATUS_BAR_EXTRAS_BAT_PERCENTAGE
-  dataStr += String(batPercent) + "%";
-#endif
-#if STATUS_BAR_EXTRAS_BAT_VOLTAGE
-  dataStr += " (" + String(std::round(batVoltage / 10.f) / 100.f, 2) + "v)";
-#endif
-  drawString(pos, yBottom - 2, dataStr, RIGHT, dataColor);
-  pos -= getStringWidth(dataStr) + 1;
+  display.setFont(&FONT_8pt8b);
+  dataStr = String(batPercent) + "%";
+  drawString(pos, textBase, dataStr, RIGHT, dataColor);
+  pos -= getStringWidth(dataStr) + 4;
 #endif
   pos -= 24;
-  drawBmp(pos, yBottom - 17, getBatBitmap24(batPercent), 24, 24, dataColor);
-  pos -= sp + 9;
+  drawBmp(pos, yMid - 12, getBatBitmap24(batPercent), 24, 24, dataColor);
+  pos -= sp;
 #endif
 
+  // WiFi
   dataColor = rssi >= -70 ? GxEPD_BLACK : ACCENT_COLOR;
-#if STATUS_BAR_EXTRAS_WIFI_STRENGTH || STATUS_BAR_EXTRAS_WIFI_RSSI
-  dataStr = "";
-#if STATUS_BAR_EXTRAS_WIFI_STRENGTH
-  dataStr += String(getWiFidesc(rssi));
-#endif
-#if STATUS_BAR_EXTRAS_WIFI_RSSI
-  if (rssi != 0)
-    dataStr += " (" + String(rssi) + "dBm)";
-#endif
-  drawString(pos, yBottom - 2, dataStr, RIGHT, dataColor);
-  pos -= getStringWidth(dataStr) + 1;
-#endif
-  pos -= 18;
-  drawBmp(pos, yBottom - 13, getWiFiBitmap16(rssi), 16, 16, dataColor);
-  pos -= sp + 8;
-
-  dataColor = GxEPD_BLACK;
-  drawString(pos, yBottom - 2, refreshTimeStr, RIGHT, dataColor);
-  pos -= getStringWidth(refreshTimeStr) + 25;
-  drawBmp(pos, yBottom - 21, wi_refresh_32x32, 32, 32, dataColor);
+  pos -= 16;
+  drawBmp(pos, yMid - 8, getWiFiBitmap16(rssi), 16, 16, dataColor);
   pos -= sp;
 
-  dataColor = ACCENT_COLOR;
-  if (!statusStr.isEmpty()) {
-    drawString(pos, yBottom - 2, statusStr, RIGHT, dataColor);
-    pos -= getStringWidth(statusStr) + 24;
-    drawBmp(pos, yBottom - 18, error_icon_24x24, 24, 24, dataColor);
-  }
+  // Updated time
+  dataColor = GxEPD_BLACK;
+  display.setFont(&FONT_8pt8b);
+  dataStr = String("Updated ") + refreshTimeStr;
+  drawString(pos, textBase, dataStr, RIGHT, dataColor);
+
   return;
 }
 
