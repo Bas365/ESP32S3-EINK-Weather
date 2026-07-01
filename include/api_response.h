@@ -211,22 +211,16 @@ typedef struct owm_resp_air_pollution
   int64_t          dt[OWM_NUM_AIR_POLLUTION];         // Date and time, Unix, UTC;
 } owm_resp_air_pollution_t;
 
-DeserializationError deserializeOneCall(WiFiClient &json,
-                                        owm_resp_onecall_t &r);
-DeserializationError deserializeAirQuality(WiFiClient &json,
-                                           owm_resp_air_pollution_t &r);
-
-// Free-tier replacements for deserializeOneCall(). Populate the same
-// owm_resp_onecall_t struct from OpenWeatherMap's free "Current Weather"
-// (/data/2.5/weather) and "5 day / 3 hour Forecast" (/data/2.5/forecast)
-// endpoints, since the paid One Call 3.0 API is not available on a free
-// API key. Fields not provided by these endpoints (uvi, dew_point, moon
-// data, alerts) are left at their zero/default values; renderer.cpp and
-// display_utils.cpp already degrade gracefully when these are zero.
-DeserializationError deserializeCurrentWeather(WiFiClient &json,
-                                               owm_resp_onecall_t &r);
-DeserializationError deserializeForecast(WiFiClient &json,
-                                         owm_resp_onecall_t &r);
+// Weather Underground / TWC API deserializers.
+// Both populate the owm_resp_onecall_t struct so the rest of the codebase
+// (renderer, display_utils) requires no changes.
+// weather.id stores the TWC icon code (0-47).
+// weather.icon stores "d" (daytime) or "n" (nighttime).
+// Temperatures stored in Kelvin, wind speeds in m/s (converted from WU metric).
+DeserializationError deserializeWUCurrent(WiFiClient &json,
+                                          owm_resp_onecall_t &r);
+DeserializationError deserializeWUForecast(WiFiClient &json,
+                                           owm_resp_onecall_t &r);
 
 
 #endif

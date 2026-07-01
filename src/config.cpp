@@ -55,13 +55,13 @@ const unsigned long WIFI_TIMEOUT = 15000; // 15 seconds
 const unsigned HTTP_CLIENT_TCP_TIMEOUT = 15000; // 15 seconds
 
 // =============================================================================
-// OPENWEATHERMAP API
-// Uses the free-tier "Current Weather" (/data/2.5/weather) and "5 day / 3
-// hour Forecast" (/data/2.5/forecast) endpoints - the paid One Call 3.0
-// API is intentionally NOT used since it requires a separate subscription.
+// THE WEATHER COMPANY (TWC) API
+// Current conditions: PWS Observations v2 (stationId-based)
+// Forecast: TWC Daily Forecast v3 (geocode-based, 5-day)
 // =============================================================================
-const String OWM_APIKEY = SECRET_OWM_APIKEY;
-const String OWM_ENDPOINT = "api.openweathermap.org";
+const String WU_APIKEY     = SECRET_WU_APIKEY;
+const String WU_STATION_ID = SECRET_WU_STATION_ID;
+const String WU_LANGUAGE   = "en-GB";
 
 // =============================================================================
 // LOCATION

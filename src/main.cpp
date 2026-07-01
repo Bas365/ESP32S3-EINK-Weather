@@ -837,11 +837,11 @@ void setup() {
     }
     Serial.println("[weather] WiFi reconnected");
   }
-  int rxStatus = getOWMonecall(client, owm_onecall);
+  int rxStatus = getWUonecall(client, owm_onecall);
   feedWatchdog();
   if (rxStatus != HTTP_CODE_OK) {
     killWiFi();
-    statusStr = "OpenWeatherMap API";
+    statusStr = "Weather Underground API";
     tmpStr = String(rxStatus, DEC) + ": " + getHttpResponsePhrase(rxStatus);
     initDisplay();
     do {

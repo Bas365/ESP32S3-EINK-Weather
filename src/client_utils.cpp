@@ -43,11 +43,8 @@
   #include <WiFiClientSecure.h>
 #endif
 
-#ifdef USE_HTTP
-  static const uint16_t OWM_PORT = 80;
-#else
-  static const uint16_t OWM_PORT = 443;
-#endif
+// WU/TWC always uses HTTPS port 443 regardless of USE_HTTP
+// (USE_HTTP is only kept for WiFiClient/WiFiClientSecure selection)
 
 /* Power-on and connect WiFi.
  * Takes int parameter to store WiFi RSSI, or "Received Signal Strength
@@ -164,55 +161,39 @@ bool waitForSNTPSync(tm *timeInfo)
   return printLocalTime(timeInfo);
 } // waitForSNTPSync
 
-/* Perform an HTTP GET request to OpenWeatherMap's free-tier "Current
- * Weather" API (/data/2.5/weather), parsing the response into r.current
- * (and r.lat/r.lon/r.timezone_offset).
- *
- * Returns the HTTP Status Code.
+static const char *WU_HOST = "api.weather.com";
+static const uint16_t WU_PORT = 443;
+
+/* Helper: perform a single HTTP GET, parse JSON with the supplied deserializer.
+ * Retries up to 3 times. Returns HTTP status code (or negative error code).
  */
-#ifdef USE_HTTP
-  static int getOWMcurrentweather(WiFiClient &client, owm_resp_onecall_t &r)
-#else
-  static int getOWMcurrentweather(WiFiClientSecure &client, owm_resp_onecall_t &r)
-#endif
+template <typename ClientT, typename DeserFn>
+static int wuGet(ClientT &client, const String &sanitizedUri,
+                 const String &uri, DeserFn deserFn, owm_resp_onecall_t &r)
 {
   int attempts = 0;
   bool rxSuccess = false;
   DeserializationError jsonErr = {};
-  String uri = "/data/2.5/weather?lat=" + LAT + "&lon=" + LON
-               + "&lang=" + OWM_LANG + "&units=standard";
-
-  // This string is printed to terminal to help with debugging. The API key is
-  // censored to reduce the risk of users exposing their key.
-  String sanitizedUri = OWM_ENDPOINT + uri + "&appid={API key}";
-
-  uri += "&appid=" + OWM_APIKEY;
+  int httpResponse = 0;
 
   Serial.print(TXT_ATTEMPTING_HTTP_REQ);
   Serial.println(": " + sanitizedUri);
-  int httpResponse = 0;
+
   while (!rxSuccess && attempts < 3)
   {
-    wl_status_t connection_status = WiFi.status();
-    if (connection_status != WL_CONNECTED)
-    {
-      // -512 offset distinguishes these errors from httpClient errors
-      return -512 - static_cast<int>(connection_status);
-    }
+    if (WiFi.status() != WL_CONNECTED)
+      return -512 - static_cast<int>(WiFi.status());
 
     HTTPClient http;
-    http.setConnectTimeout(HTTP_CLIENT_TCP_TIMEOUT); // default 5000ms
-    http.setTimeout(HTTP_CLIENT_TCP_TIMEOUT); // default 5000ms
-    http.begin(client, OWM_ENDPOINT, OWM_PORT, uri);
+    http.setConnectTimeout(HTTP_CLIENT_TCP_TIMEOUT);
+    http.setTimeout(HTTP_CLIENT_TCP_TIMEOUT);
+    http.begin(client, WU_HOST, WU_PORT, uri);
     httpResponse = http.GET();
     if (httpResponse == HTTP_CODE_OK)
     {
-      jsonErr = deserializeCurrentWeather(http.getStream(), r);
+      jsonErr = deserFn(http.getStream(), r);
       if (jsonErr)
-      {
-        // -256 offset distinguishes these errors from httpClient errors
         httpResponse = -256 - static_cast<int>(jsonErr.code());
-      }
       rxSuccess = !jsonErr;
     }
     client.stop();
@@ -221,100 +202,76 @@ bool waitForSNTPSync(tm *timeInfo)
                    + getHttpResponsePhrase(httpResponse));
     ++attempts;
   }
-
   return httpResponse;
-} // getOWMcurrentweather
+}
 
-/* Perform an HTTP GET request to OpenWeatherMap's free-tier "5 day / 3
- * hour Forecast" API (/data/2.5/forecast), parsing the response into
- * r.hourly[] and r.daily[].
+/* Fetch WU PWS current conditions (v2) and TWC 5-day daily forecast (v3),
+ * then merge both into r so the rest of the codebase sees a single unified
+ * weather object (same owm_resp_onecall_t shape as before).
  *
- * Returns the HTTP Status Code.
+ * Call order: forecast first (sets daily[0].sunrise/sunset), then current
+ * (uses those timestamps to determine day/night for the current icon).
+ *
+ * Returns HTTP_CODE_OK only if both requests succeed.
  */
 #ifdef USE_HTTP
-  static int getOWMforecast(WiFiClient &client, owm_resp_onecall_t &r)
+  int getWUonecall(WiFiClient &client, owm_resp_onecall_t &r)
 #else
-  static int getOWMforecast(WiFiClientSecure &client, owm_resp_onecall_t &r)
+  int getWUonecall(WiFiClientSecure &client, owm_resp_onecall_t &r)
 #endif
 {
-  int attempts = 0;
-  bool rxSuccess = false;
-  DeserializationError jsonErr = {};
-  // cnt=40 requests the maximum number of 3-hour entries (~5 days)
-  String uri = "/data/2.5/forecast?lat=" + LAT + "&lon=" + LON
-               + "&lang=" + OWM_LANG + "&units=standard&cnt=40";
+  // --- 5-day daily forecast ---
+  String fUri = "/v3/wx/forecast/daily/5day?geocode=" + LAT + "," + LON
+                + "&format=json&units=m&language=" + WU_LANGUAGE
+                + "&apiKey=" + WU_APIKEY;
+  String fSanitized = String("/v3/wx/forecast/daily/5day?geocode=") + LAT + "," + LON
+                      + "&format=json&units=m&language=" + WU_LANGUAGE
+                      + "&apiKey={API key}";
 
-  // This string is printed to terminal to help with debugging. The API key is
-  // censored to reduce the risk of users exposing their key.
-  String sanitizedUri = OWM_ENDPOINT + uri + "&appid={API key}";
+  int status = wuGet(client, fSanitized, fUri,
+                     [](WiFiClient &s, owm_resp_onecall_t &o) {
+                       return deserializeWUForecast(s, o);
+                     }, r);
+  if (status != HTTP_CODE_OK) return status;
 
-  uri += "&appid=" + OWM_APIKEY;
+  // --- PWS current conditions ---
+  String cUri = "/v2/pws/observations/current?stationId=" + WU_STATION_ID
+                + "&format=json&units=m&apiKey=" + WU_APIKEY;
+  String cSanitized = String("/v2/pws/observations/current?stationId=") + WU_STATION_ID
+                      + "&format=json&units=m&apiKey={API key}";
 
-  Serial.print(TXT_ATTEMPTING_HTTP_REQ);
-  Serial.println(": " + sanitizedUri);
-  int httpResponse = 0;
-  while (!rxSuccess && attempts < 3)
+  status = wuGet(client, cSanitized, cUri,
+                 [](WiFiClient &s, owm_resp_onecall_t &o) {
+                   return deserializeWUCurrent(s, o);
+                 }, r);
+  if (status != HTTP_CODE_OK) return status;
+
+  // --- Patch current conditions using forecast data ---
+  // PWS does not provide icon, sunrise/sunset, clouds or visibility
+  if (r.current.sunrise == 0 && r.daily[0].sunrise != 0)
   {
-    wl_status_t connection_status = WiFi.status();
-    if (connection_status != WL_CONNECTED)
-    {
-      // -512 offset distinguishes these errors from httpClient errors
-      return -512 - static_cast<int>(connection_status);
-    }
-
-    HTTPClient http;
-    http.setConnectTimeout(HTTP_CLIENT_TCP_TIMEOUT); // default 5000ms
-    http.setTimeout(HTTP_CLIENT_TCP_TIMEOUT); // default 5000ms
-    http.begin(client, OWM_ENDPOINT, OWM_PORT, uri);
-    httpResponse = http.GET();
-    if (httpResponse == HTTP_CODE_OK)
-    {
-      jsonErr = deserializeForecast(http.getStream(), r);
-      if (jsonErr)
-      {
-        // -256 offset distinguishes these errors from httpClient errors
-        httpResponse = -256 - static_cast<int>(jsonErr.code());
-      }
-      rxSuccess = !jsonErr;
-    }
-    client.stop();
-    http.end();
-    Serial.println("  " + String(httpResponse, DEC) + " "
-                   + getHttpResponsePhrase(httpResponse));
-    ++attempts;
+    r.current.sunrise = r.daily[0].sunrise;
+    r.current.sunset  = r.daily[0].sunset;
   }
 
-  return httpResponse;
-} // getOWMforecast
+  bool isDay = (r.current.sunrise != 0 && r.current.sunset != 0)
+               ? (r.current.dt >= r.current.sunrise && r.current.dt < r.current.sunset)
+               : true;
 
-/* Fetches current weather conditions and the 5 day / 3 hour forecast using
- * OpenWeatherMap's free-tier endpoints, and merges both into r (the same
- * owm_resp_onecall_t struct previously populated by the paid One Call 3.0
- * API). Kept under the original name/signature so callers in main.cpp
- * don't need to change.
- *
- * Returns the HTTP Status Code of whichever request failed, or the
- * forecast request's status code if both succeeded.
- */
-#ifdef USE_HTTP
-  int getOWMonecall(WiFiClient &client, owm_resp_onecall_t &r)
-#else
-  int getOWMonecall(WiFiClientSecure &client, owm_resp_onecall_t &r)
-#endif
-{
-  int httpResponse = getOWMcurrentweather(client, r);
-  if (httpResponse != HTTP_CODE_OK)
-  {
-    return httpResponse;
-  }
-  return getOWMforecast(client, r);
-} // getOWMonecall
+  int dpIdx = isDay ? 0 : 1;
+  r.current.weather.id          = r.hourly[dpIdx].weather.id;
+  r.current.weather.main        = r.hourly[dpIdx].weather.main;
+  r.current.weather.description = r.hourly[dpIdx].weather.description;
+  r.current.weather.icon        = String(isDay ? "d" : "n");
+  r.current.clouds              = r.hourly[dpIdx].clouds;
+  r.current.visibility          = 10000;
 
-/* Perform an HTTP GET request to OpenWeatherMap's "Air Pollution" API
- * If data is received, it will be parsed and stored in the global variable
- * owm_air_pollution.
- *
- * Returns the HTTP Status Code.
+  return HTTP_CODE_OK;
+} // getWUonecall
+
+/* getOWMairpollution: WU/TWC does not offer an equivalent API, so this
+ * always returns an error. The caller (main.cpp) already handles
+ * airPollutionSuccess = false gracefully.
  */
 #ifdef USE_HTTP
   int getOWMairpollution(WiFiClient &client, owm_resp_air_pollution_t &r)
@@ -322,65 +279,10 @@ bool waitForSNTPSync(tm *timeInfo)
   int getOWMairpollution(WiFiClientSecure &client, owm_resp_air_pollution_t &r)
 #endif
 {
-  int attempts = 0;
-  bool rxSuccess = false;
-  DeserializationError jsonErr = {};
-
-  // set start and end to appropriate values so that the last 24 hours of air
-  // pollution history is returned. Unix, UTC.
-  time_t now;
-  int64_t end = time(&now);
-  // minus 1 is important here, otherwise we could get an extra hour of history
-  int64_t start = end - ((3600 * OWM_NUM_AIR_POLLUTION) - 1);
-  char endStr[22];
-  char startStr[22];
-  sprintf(endStr, "%lld", end);
-  sprintf(startStr, "%lld", start);
-  String uri = "/data/2.5/air_pollution/history?lat=" + LAT + "&lon=" + LON
-               + "&start=" + startStr + "&end=" + endStr
-               + "&appid=" + OWM_APIKEY;
-  // This string is printed to terminal to help with debugging. The API key is
-  // censored to reduce the risk of users exposing their key.
-  String sanitizedUri = OWM_ENDPOINT +
-               "/data/2.5/air_pollution/history?lat=" + LAT + "&lon=" + LON
-               + "&start=" + startStr + "&end=" + endStr
-               + "&appid={API key}";
-
-  Serial.print(TXT_ATTEMPTING_HTTP_REQ);
-  Serial.println(": " + sanitizedUri);
-  int httpResponse = 0;
-  while (!rxSuccess && attempts < 3)
-  {
-    wl_status_t connection_status = WiFi.status();
-    if (connection_status != WL_CONNECTED)
-    {
-      // -512 offset distinguishes these errors from httpClient errors
-      return -512 - static_cast<int>(connection_status);
-    }
-
-    HTTPClient http;
-    http.setConnectTimeout(HTTP_CLIENT_TCP_TIMEOUT); // default 5000ms
-    http.setTimeout(HTTP_CLIENT_TCP_TIMEOUT); // default 5000ms
-    http.begin(client, OWM_ENDPOINT, OWM_PORT, uri);
-    httpResponse = http.GET();
-    if (httpResponse == HTTP_CODE_OK)
-    {
-      jsonErr = deserializeAirQuality(http.getStream(), r);
-      if (jsonErr)
-      {
-        // -256 offset to distinguishes these errors from httpClient errors
-        httpResponse = -256 - static_cast<int>(jsonErr.code());
-      }
-      rxSuccess = !jsonErr;
-    }
-    client.stop();
-    http.end();
-    Serial.println("  " + String(httpResponse, DEC) + " "
-                   + getHttpResponsePhrase(httpResponse));
-    ++attempts;
-  }
-
-  return httpResponse;
+  (void)client;
+  (void)r;
+  Serial.println("[info] Air pollution API not available for Weather Underground");
+  return HTTP_CODE_NOT_FOUND; // treated as non-critical failure in main.cpp
 } // getOWMairpollution
 
 /* Prints debug information about heap usage.

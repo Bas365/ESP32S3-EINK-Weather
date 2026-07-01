@@ -14,10 +14,12 @@
 #define SECRET_WIFI_PASSWORD "te"
 
 // =============================================================================
-// OPENWEATHERMAP API
-// Get your free API key at: https://openweathermap.org/api
+// THE WEATHER COMPANY (TWC) API
+// API key: available from Weather Underground / TWC developer dashboard
+// Station ID: any public WU station near your location (wunderground.com/wundermap)
 // =============================================================================
-#define SECRET_OWM_APIKEY    "your_openweathermap_api_key"
+#define SECRET_WU_APIKEY     "your_wunderground_api_key"
+#define SECRET_WU_STATION_ID "your_nearby_station_id"
 
 // =============================================================================
 // LOCATION
