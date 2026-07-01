@@ -112,7 +112,7 @@ namespace hero {
   const int STATUS_H   = 34;              // top status bar height
   const int BODY_Y0    = STATUS_H;        // 34
   const int BODY_Y1    = 270;             // bottom of current/forecast body
-  const int LCOL_W     = 372;             // left (current conditions) column
+  const int LCOL_W     = 380;             // left (current conditions) column — screen centre
   const int METRIC_H   = 88;              // bottom metric strip in left column
   const int METRIC_Y0  = BODY_Y1 - METRIC_H; // 182
   const int GRAPH_Y0   = BODY_Y1;         // 270 (top of hourly graph)
@@ -422,8 +422,8 @@ void drawForecast(const owm_daily_t *daily, tm timeInfo) {
   const int headY0 = BODY_Y0;          // 34
   const int headH = 24;
   const int rowsY0 = headY0 + headH;   // 58
-  const int rowsH = BODY_Y1 - rowsY0;  // 212
-  const float rowH = rowsH / 5.0f;     // ~42.4
+  // row height set so the divider under row 3 aligns with METRIC_Y0 (Feels Like line)
+  const float rowH = (METRIC_Y0 - rowsY0) / 3.0f;  // ~41.3
 
   // header
   const int precipX = colX + 172;  // precip column (left aligned)
@@ -450,16 +450,16 @@ void drawForecast(const owm_daily_t *daily, tm timeInfo) {
     timeInfo.tm_wday = (timeInfo.tm_wday + 1) % 7;
 
     // condition icon
-    drawBmp(colX + 62, yc - 16, getDailyForecastBitmap32(daily[i]), 32, 32,
+    drawBmp(colX + 82, yc - 16, getDailyForecastBitmap32(daily[i]), 32, 32,
             GxEPD_BLACK);
 
     // hi / lo (fixed columns so the lows align vertically across rows)
     String hiStr = String(tempToUnitInt(daily[i].temp.max)) + "\260";
     String loStr = String(tempToUnitInt(daily[i].temp.min)) + "\260";
     display.setFont(&FONT_12pt8b);
-    drawString(colX + 100, baseY, hiStr, LEFT);
+    drawString(colX + 120, baseY, hiStr, LEFT);
     display.setFont(&FONT_9pt8b);
-    drawString(colX + 136, baseY, loStr, LEFT);
+    drawString(colX + 156, baseY, loStr, LEFT);
 
     // precip probability
     int pop = static_cast<int>(std::round(daily[i].pop * 100.0f));
@@ -658,33 +658,22 @@ void drawOutlookGraph(const owm_hourly_t *hourly, const owm_daily_t *daily,
     if (nextMidnight) break;
   }
 
-  // --- temperature scale: relative to TODAY's min/max, heavily rounded ------
-  int yMajorTicks = 4;
-#ifdef UNITS_TEMP_CELSIUS
-  float tempMin = kelvin_to_celsius(daily[0].temp.min);
-  float tempMax = kelvin_to_celsius(daily[0].temp.max);
-#elif defined(UNITS_TEMP_FAHRENHEIT)
-  float tempMin = kelvin_to_fahrenheit(daily[0].temp.min);
-  float tempMax = kelvin_to_fahrenheit(daily[0].temp.max);
-#else
-  float tempMin = daily[0].temp.min;
-  float tempMax = daily[0].temp.max;
-#endif
-  for (size_t k = 0; k < hTemp.size(); ++k) {
+  // --- temperature scale: tight bounds around plotted hourly data only ------
+  float tempMin = hTemp.empty() ? 0.0f : hTemp[0];
+  float tempMax = hTemp.empty() ? 0.0f : hTemp[0];
+  for (size_t k = 1; k < hTemp.size(); ++k) {
     tempMin = std::min(tempMin, hTemp[k]);
     tempMax = std::max(tempMax, hTemp[k]);
   }
-  // pick a clean step so the 4 chunks land on round numbers
+  // Choose step, then snap bounds to the nearest step just outside the data.
   int range = static_cast<int>(std::ceil(tempMax)) -
               static_cast<int>(std::floor(tempMin));
   int step = (range <= 8) ? 2 : (range <= 20 ? 5 : 10);
   int tempBoundMin = static_cast<int>(std::floor(tempMin / (float)step)) * step;
-  int tempBoundMax = tempBoundMin + yMajorTicks * step;
-  while (tempBoundMax < static_cast<int>(std::ceil(tempMax))) {
-    step += (step >= 5 ? 5 : 1);
-    tempBoundMin = static_cast<int>(std::floor(tempMin / (float)step)) * step;
-    tempBoundMax = tempBoundMin + yMajorTicks * step;
-  }
+  int tempBoundMax = static_cast<int>(std::ceil(tempMax  / (float)step)) * step;
+  // Ensure at least 2 ticks of separation so labels don't collide
+  if (tempBoundMax - tempBoundMin < 2 * step) tempBoundMax = tempBoundMin + 2 * step;
+  int yMajorTicks    = (tempBoundMax - tempBoundMin) / step;
   int yTempMajorTicks = step;
 
 #ifdef UNITS_HOURLY_PRECIP_POP
