@@ -294,9 +294,9 @@ void drawCurrentConditions(const owm_current_t &current,
 
   // ---- structural dividers ------------------------------------------------
   // vertical split between current column and 5-day column
-  mVLine(LCOL_W, BODY_Y0, BODY_Y1, 2);
+  mVLine(LCOL_W, BODY_Y0, BODY_Y1, 3);
   // metric strip top rule (left column only)
-  mHLine(0, LCOL_W, METRIC_Y0, 2);
+  mHLine(0, LCOL_W, METRIC_Y0, 3);
 
   // ---- weather icon + big temperature ------------------------------------
   drawBmp(8, 56, getCurrentConditionsBitmap64(current, today), 64, 64,
@@ -440,7 +440,10 @@ void drawForecast(const owm_daily_t *daily, tm timeInfo) {
     int rowBot = rowsY0 + static_cast<int>(std::round((i + 1) * rowH));
     int yc = (rowTop + rowBot) / 2;     // vertical center
     int baseY = yc + 6;                 // text baseline approx
-    mHLine(colX, colR, rowTop, 1, GxEPD_BLACK);
+    // Row 3's divider spans full-width at 3px to merge with the left column's
+    // METRIC_Y0 rule. Minor separators are 1px drawn at rowTop+1 (centre of
+    // a notional 3px band) to create visual hierarchy.
+    mHLine(colX, colR, rowTop + 1, 1, GxEPD_BLACK);
 
     // weekday
     display.setFont(&FONT_11pt8b);
@@ -533,7 +536,7 @@ void drawAlerts(std::vector<owm_alerts_t> &alerts, const String &city,
 void drawLocationDate(const String &city, const String &date) {
   using namespace hero;
   // status bar bottom rule
-  mHLine(0, W, STATUS_H, 2, GxEPD_BLACK);
+  mHLine(0, W, STATUS_H, 3, GxEPD_BLACK);
   // city (left)
   display.setFont(&FONT_12pt8b);
   drawString(4, 24, city, LEFT, ACCENT_COLOR);
@@ -576,7 +579,7 @@ void drawOutlookGraph(const owm_hourly_t *hourly, const owm_daily_t *daily,
   using namespace hero;
 
   // top rule + header row
-  mHLine(0, W, GRAPH_Y0, 2, GxEPD_BLACK);
+  mHLine(0, W, GRAPH_Y0, 3, GxEPD_BLACK);
   display.setFont(&FONT_6pt8b);
   // left legend: filled square + TEMP
   mFillRect(8, GRAPH_Y0 + 11, 9, 9, GxEPD_BLACK);
