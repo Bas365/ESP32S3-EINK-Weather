@@ -901,7 +901,7 @@ void setup() {
 
   // Record today's hourly temp/precip into history for the outlook graph.
   historyUpdate(owm_onecall.current.temp, owm_onecall.hourly[0].pop * 100.0f,
-                timeInfo);
+                owm_onecall.daily[0].temp.max, timeInfo);
 
   // RENDER WEATHER DISPLAY
   watchdogCheckAndSleep(startTime, 30);

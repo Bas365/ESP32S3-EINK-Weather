@@ -7,12 +7,13 @@
 
 static const char *HIST_KEY = "dayhist";
 
-// Persisted record. 80 bytes — trivially small for NVS.
+// Persisted record. NVS size checked on load — struct changes auto-reset it.
 struct DayHistory {
-  int32_t  dayKey;       // year * 1000 + yday (identifies the calendar day)
-  uint32_t filled;       // bit per hour (0..23) set when a reading is stored
-  int16_t  tempK10[24];  // temperature, Kelvin * 10
-  uint8_t  pop[24];      // precip probability, 0..100
+  int32_t  dayKey;          // year * 1000 + yday (identifies the calendar day)
+  uint32_t filled;          // bit per hour (0..23) set when a reading is stored
+  int16_t  tempK10[24];     // temperature, Kelvin * 10
+  uint8_t  pop[24];         // precip probability, 0..100
+  int16_t  dayMaxTempK10;   // running max of daily[0].temp.max seen today * 10
 };
 
 static DayHistory g_hist;
@@ -22,7 +23,8 @@ static int32_t dayKeyOf(const tm &t) {
   return (int32_t)t.tm_year * 1000 + t.tm_yday;
 }
 
-void historyUpdate(float currentTempK, float currentPopPct, const tm &nowLocal) {
+void historyUpdate(float currentTempK, float currentPopPct,
+                   float dailyMaxTempK, const tm &nowLocal) {
   Preferences p;
   p.begin(NVS_NAMESPACE, false);
 
@@ -49,6 +51,11 @@ void historyUpdate(float currentTempK, float currentPopPct, const tm &nowLocal) 
     g_hist.filled |= (1UL << h);
   }
 
+  // Keep the running maximum of today's forecast high
+  int16_t newMax = (int16_t)lroundf(dailyMaxTempK * 10.0f);
+  if (newMax > g_hist.dayMaxTempK10)
+    g_hist.dayMaxTempK10 = newMax;
+
   p.putBytes(HIST_KEY, &g_hist, sizeof(g_hist));
   p.end();
   g_loaded = true;
@@ -66,4 +73,8 @@ float historyTempK(int hour) {
 int historyPop(int hour) {
   if (hour < 0 || hour >= 24) return 0;
   return g_hist.pop[hour];
+}
+
+float historyDayMaxTempK() {
+  return g_hist.dayMaxTempK10 / 10.0f;
 }

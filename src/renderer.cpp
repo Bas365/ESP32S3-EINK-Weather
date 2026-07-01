@@ -306,22 +306,26 @@ void drawCurrentConditions(const owm_current_t &current,
   const int tempBaseY = 128;
   display.setFont(&FONT_48pt8b_temperature);
   dataStr = String(tempToUnitInt(current.temp));
-  drawString(204, tempBaseY, dataStr, LEFT);
+  drawString(205, tempBaseY, dataStr, LEFT);  // +1px offset pass for weight
+  drawString(204, tempBaseY, dataStr, LEFT);  // main pass
   int afterTempX = display.getCursorX() - MARGIN_X;
-  display.setFont(&FONT_14pt8b);
+  display.setFont(&FONT_20pt8b);
 #if defined(UNITS_TEMP_CELSIUS) || defined(UNITS_TEMP_FAHRENHEIT)
-  drawString(afterTempX + 4, tempBaseY - 36, String("\260"), LEFT);
+  drawString(afterTempX + 4, tempBaseY - 46, String("\260"), LEFT);
   int degX = display.getCursorX() - MARGIN_X;
-  display.setFont(&FONT_12pt8b);
+  display.setFont(&FONT_18pt8b);
 #ifdef UNITS_TEMP_CELSIUS
   drawString(degX, tempBaseY - 36, "C", LEFT);
 #else
-  drawString(degX, tempBaseY - 36, "F", LEFT);
+  drawString(degX, tempBaseY - 46, "F", LEFT);
 #endif
 #endif
 
   // ---- HIGH / LOW (right edge of left column) -----------------------------
-  String hiStr = String(tempToUnitInt(today.temp.max)) + "\260";
+  // Use the stored running max so the HIGH never decreases as forecasts update
+  float storedMax = historyDayMaxTempK();
+  float displayMax = (storedMax > today.temp.max) ? storedMax : today.temp.max;
+  String hiStr = String(tempToUnitInt(displayMax)) + "\260";
   String loStr = String(tempToUnitInt(today.temp.min)) + "\260";
   const int hlRight = LCOL_W - 10;
   display.setFont(&FONT_6pt8b);
@@ -454,8 +458,11 @@ void drawForecast(const owm_daily_t *daily, tm timeInfo) {
     drawBmp(colX + 72, yc - 16, getDailyForecastBitmap32(daily[i]), 32, 32,
             GxEPD_BLACK);
 
-    // hi / lo (fixed columns so the lows align vertically across rows)
-    String hiStr = String(tempToUnitInt(daily[i].temp.max)) + "\260";
+    // hi / lo — row 0 (today) uses the stored running max for consistency
+    float rowMax = (i == 0)
+        ? std::max(historyDayMaxTempK(), (float)daily[i].temp.max)
+        : (float)daily[i].temp.max;
+    String hiStr = String(tempToUnitInt(rowMax)) + "\260";
     String loStr = String(tempToUnitInt(daily[i].temp.min)) + "\260";
     display.setFont(&FONT_12pt8b);
     drawString(colX + 120, baseY, hiStr, LEFT);
