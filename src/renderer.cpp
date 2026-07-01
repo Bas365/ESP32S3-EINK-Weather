@@ -450,7 +450,7 @@ void drawForecast(const owm_daily_t *daily, tm timeInfo) {
     timeInfo.tm_wday = (timeInfo.tm_wday + 1) % 7;
 
     // condition icon
-    drawBmp(colX + 82, yc - 16, getDailyForecastBitmap32(daily[i]), 32, 32,
+    drawBmp(colX + 72, yc - 16, getDailyForecastBitmap32(daily[i]), 32, 32,
             GxEPD_BLACK);
 
     // hi / lo (fixed columns so the lows align vertically across rows)
