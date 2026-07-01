@@ -299,13 +299,14 @@ void drawCurrentConditions(const owm_current_t &current,
   mHLine(0, LCOL_W, METRIC_Y0, 2);
 
   // ---- weather icon + big temperature ------------------------------------
-  drawBmp(8, 56, getCurrentConditionsBitmap64(current, today), 64, 64,
+  // 196x196 icon anchored at top-left of body; metric strip draws on top
+  drawBmp(0, 0, getCurrentConditionsBitmap196(current, today), 196, 196,
           GxEPD_BLACK);
 
   const int tempBaseY = 128;
   display.setFont(&FONT_48pt8b_temperature);
   dataStr = String(tempToUnitInt(current.temp));
-  drawString(82, tempBaseY, dataStr, LEFT);
+  drawString(204, tempBaseY, dataStr, LEFT);
   int afterTempX = display.getCursorX() - MARGIN_X;
   display.setFont(&FONT_14pt8b);
 #if defined(UNITS_TEMP_CELSIUS) || defined(UNITS_TEMP_FAHRENHEIT)
