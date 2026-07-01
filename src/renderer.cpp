@@ -425,14 +425,14 @@ void drawForecast(const owm_daily_t *daily, tm timeInfo) {
   // row height set so the divider under row 3 aligns with METRIC_Y0 (Feels Like line)
   const float rowH = (METRIC_Y0 - rowsY0) / 3.0f;  // ~41.3
 
-  // header
-  const int precipX = colX + 172;  // precip column (left aligned)
-  const int windX = colX + 252;    // wind column (left aligned)
+  // header — wind right-aligned to right edge, precip 90px to its left
+  const int windX   = padR;         // right edge (text right-aligned)
+  const int precipX = windX - 120;   // precip right-aligned 90px left of wind
   display.setFont(&FONT_8pt8b);
   drawString(padL, headY0 + 16, "5-DAY FORECAST", LEFT);
   display.setFont(&FONT_6pt8b);
-  drawString(precipX, headY0 + 16, "PRECIP", LEFT);
-  drawString(windX, headY0 + 16, "WIND", LEFT);
+  drawString(precipX, headY0 + 16, "PRECIP", RIGHT);
+  drawString(windX, headY0 + 16, "WIND", RIGHT);
 
   String dataStr;
   for (int i = 0; i < 5; ++i) {
@@ -464,12 +464,12 @@ void drawForecast(const owm_daily_t *daily, tm timeInfo) {
     // precip probability
     int pop = static_cast<int>(std::round(daily[i].pop * 100.0f));
     display.setFont(&FONT_9pt8b);
-    drawString(precipX, baseY, String(pop) + "%", LEFT);
+    drawString(precipX, baseY, String(pop) + "%", RIGHT);
 
     // wind: direction + speed + unit
     dataStr = String(getCompassPointNotation(daily[i].wind_deg)) + " " +
               String(windToUnitInt(daily[i].wind_speed)) + " km/h";
-    drawString(windX, baseY, dataStr, LEFT);
+    drawString(windX, baseY, dataStr, RIGHT);
   }
   return;
 }
