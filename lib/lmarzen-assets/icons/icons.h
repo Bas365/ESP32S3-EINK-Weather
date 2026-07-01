@@ -12,7 +12,7 @@
 #include "icons_minimal_32x32.h"
 #include "icons_minimal_48x48.h"
 #include "icons_minimal_64x64.h"
-#include "icons_minimal_196x196.h"
+#include "icons_196x196.h"
 
 // Icon name enum - only icons we actually use
 typedef enum icon_name {

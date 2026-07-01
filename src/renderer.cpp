@@ -18,7 +18,7 @@
 
 // icon header files (minimal set for TRMNL OG)
 #include "icons/icons_minimal_16x16.h"
-#include "icons/icons_minimal_196x196.h"
+#include "icons/icons_196x196.h"
 #include "icons/icons_minimal_24x24.h"
 #include "icons/icons_minimal_32x32.h"
 #include "icons/icons_minimal_48x48.h"
